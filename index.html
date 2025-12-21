@@ -17,6 +17,12 @@
         canvas {
             display: block;
         }
+        #labelCanvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
         #ui {
             position: fixed;
             top: 10px;
@@ -73,10 +79,12 @@
 </head>
 <body>
     <canvas id="canvas"></canvas>
+    <canvas id="labelCanvas"></canvas>
     <div id="ui">
         <div>Position: <span id="pos">0, 0, 0</span></div>
         <div>Latitude: <span id="lat">0</span>° Longitude: <span id="lon">0</span>°</div>
         <div>Grounded: <span id="grounded">No</span></div>
+        <div>Players: <span id="playerCount">1</span></div>
     </div>
     <div id="instructions">
         <h2>Spherical Planet Simulation</h2>
@@ -118,10 +126,16 @@
             alert('WebGL2 not supported!');
         }
 
+        // Label canvas for nametags
+        const labelCanvas = document.getElementById('labelCanvas');
+        const ctx = labelCanvas.getContext('2d');
+
         // Resize canvas
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+            labelCanvas.width = window.innerWidth;
+            labelCanvas.height = window.innerHeight;
             gl.viewport(0, 0, canvas.width, canvas.height);
         }
         window.addEventListener('resize', resize);
@@ -629,6 +643,384 @@
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, treeIndexBuffer);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, treeMesh.indices, gl.STATIC_DRAW);
 
+        // Generate player sphere mesh (unit sphere, will be scaled and positioned per player)
+        function generatePlayerSphere(segments) {
+            const vertices = [];
+            const normals = [];
+            const indices = [];
+            
+            for (let lat = 0; lat <= segments; lat++) {
+                const theta = lat * Math.PI / segments;
+                const sinTheta = Math.sin(theta);
+                const cosTheta = Math.cos(theta);
+                
+                for (let lon = 0; lon <= segments; lon++) {
+                    const phi = lon * 2 * Math.PI / segments;
+                    const sinPhi = Math.sin(phi);
+                    const cosPhi = Math.cos(phi);
+                    
+                    const x = cosPhi * sinTheta;
+                    const y = cosTheta;
+                    const z = sinPhi * sinTheta;
+                    
+                    vertices.push(x, y, z);
+                    normals.push(x, y, z);
+                }
+            }
+            
+            for (let lat = 0; lat < segments; lat++) {
+                for (let lon = 0; lon < segments; lon++) {
+                    const first = lat * (segments + 1) + lon;
+                    const second = first + segments + 1;
+                    
+                    indices.push(first, second, first + 1);
+                    indices.push(second, second + 1, first + 1);
+                }
+            }
+            
+            return {
+                vertices: new Float32Array(vertices),
+                normals: new Float32Array(normals),
+                indices: new Uint32Array(indices)
+            };
+        }
+        
+        const playerSphereMesh = generatePlayerSphere(12);
+        
+        // Create player sphere VAO (geometry only, color set per-player)
+        const playerSphereVao = gl.createVertexArray();
+        gl.bindVertexArray(playerSphereVao);
+        
+        const playerSpherePosBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, playerSpherePosBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, playerSphereMesh.vertices, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(attribs.position);
+        gl.vertexAttribPointer(attribs.position, 3, gl.FLOAT, false, 0, 0);
+        
+        const playerSphereNormBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, playerSphereNormBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, playerSphereMesh.normals, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(attribs.normal);
+        gl.vertexAttribPointer(attribs.normal, 3, gl.FLOAT, false, 0, 0);
+        
+        // Color buffer for player sphere - will be updated per draw
+        const playerSphereColorBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, playerSphereColorBuf);
+        gl.enableVertexAttribArray(attribs.color);
+        gl.vertexAttribPointer(attribs.color, 3, gl.FLOAT, false, 0, 0);
+        
+        const playerSphereIdxBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, playerSphereIdxBuf);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, playerSphereMesh.indices, gl.STATIC_DRAW);
+
+        // Generate look direction pointer (cylinder pointing in +Z direction)
+        function generatePointerCylinder(radius, length, segments) {
+            const vertices = [];
+            const normals = [];
+            const indices = [];
+            
+            // Cylinder along Z axis, from 0 to length
+            for (let i = 0; i <= segments; i++) {
+                const angle = (i / segments) * Math.PI * 2;
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                
+                // Back cap vertex (at z=0)
+                vertices.push(cos * radius, sin * radius, 0);
+                normals.push(cos, sin, 0);
+                
+                // Front vertex (at z=length)
+                vertices.push(cos * radius, sin * radius, length);
+                normals.push(cos, sin, 0);
+            }
+            
+            // Side faces
+            for (let i = 0; i < segments; i++) {
+                const i0 = i * 2;
+                const i1 = i * 2 + 1;
+                const i2 = i * 2 + 2;
+                const i3 = i * 2 + 3;
+                indices.push(i0, i2, i1);
+                indices.push(i1, i2, i3);
+            }
+            
+            // Front cap (cone tip for more character)
+            const tipIdx = vertices.length / 3;
+            vertices.push(0, 0, length + radius * 2); // Cone tip
+            normals.push(0, 0, 1);
+            
+            const frontCapStart = vertices.length / 3;
+            for (let i = 0; i <= segments; i++) {
+                const angle = (i / segments) * Math.PI * 2;
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                vertices.push(cos * radius, sin * radius, length);
+                // Cone normal pointing outward and forward
+                const nx = cos * 0.7;
+                const ny = sin * 0.7;
+                const nz = 0.7;
+                normals.push(nx, ny, nz);
+            }
+            
+            for (let i = 0; i < segments; i++) {
+                indices.push(tipIdx, frontCapStart + i + 1, frontCapStart + i);
+            }
+            
+            return {
+                vertices: new Float32Array(vertices),
+                normals: new Float32Array(normals),
+                indices: new Uint32Array(indices)
+            };
+        }
+        
+        const pointerMesh = generatePointerCylinder(0.15, 1.2, 8);
+        
+        // Create pointer VAO
+        const pointerVao = gl.createVertexArray();
+        gl.bindVertexArray(pointerVao);
+        
+        const pointerPosBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, pointerPosBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, pointerMesh.vertices, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(attribs.position);
+        gl.vertexAttribPointer(attribs.position, 3, gl.FLOAT, false, 0, 0);
+        
+        const pointerNormBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, pointerNormBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, pointerMesh.normals, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(attribs.normal);
+        gl.vertexAttribPointer(attribs.normal, 3, gl.FLOAT, false, 0, 0);
+        
+        const pointerColorBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, pointerColorBuf);
+        gl.enableVertexAttribArray(attribs.color);
+        gl.vertexAttribPointer(attribs.color, 3, gl.FLOAT, false, 0, 0);
+        
+        const pointerIdxBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, pointerIdxBuf);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, pointerMesh.indices, gl.STATIC_DRAW);
+
+        // Multiplayer state
+        const otherPlayers = new Map();
+        let myPlayerId = null;
+        let myPlayerColor = null;
+        let ws = null;
+        const PLAYER_SPHERE_RADIUS = 1.0;
+        
+        // Connect to WebSocket server
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}`);
+            
+            ws.onopen = () => {
+                console.log('Connected to server');
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                switch (data.type) {
+                    case 'init':
+                        myPlayerId = data.id;
+                        myPlayerColor = data.color;
+                        console.log('My player ID:', myPlayerId);
+                        break;
+                        
+                    case 'playerJoin':
+                        console.log('Player joined:', data.id);
+                        otherPlayers.set(data.id, {
+                            id: data.id,
+                            color: data.color,
+                            position: data.position,
+                            forward: data.forward,
+                            pitch: data.pitch || 0
+                        });
+                        break;
+                        
+                    case 'playerMove':
+                        const otherPlayer = otherPlayers.get(data.id);
+                        if (otherPlayer) {
+                            otherPlayer.position = data.position;
+                            otherPlayer.forward = data.forward;
+                            otherPlayer.pitch = data.pitch || 0;
+                        }
+                        break;
+                        
+                    case 'playerLeave':
+                        console.log('Player left:', data.id);
+                        otherPlayers.delete(data.id);
+                        break;
+                }
+            };
+            
+            ws.onclose = () => {
+                console.log('Disconnected from server, reconnecting...');
+                setTimeout(connectWebSocket, 2000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+        }
+        
+        // Send position update to server
+        let lastPositionSent = 0;
+        function sendPositionUpdate() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const now = performance.now();
+                if (now - lastPositionSent > 50) { // Send at most 20 times per second
+                    ws.send(JSON.stringify({
+                        type: 'position',
+                        position: player.position,
+                        forward: player.forward,
+                        pitch: player.pitch
+                    }));
+                    lastPositionSent = now;
+                }
+            }
+        }
+        
+        // Connect on load
+        connectWebSocket();
+        
+        // Create color array for player sphere
+        function createColorArray(color, vertexCount) {
+            const colors = new Float32Array(vertexCount * 3);
+            for (let i = 0; i < vertexCount; i++) {
+                colors[i * 3] = color.r;
+                colors[i * 3 + 1] = color.g;
+                colors[i * 3 + 2] = color.b;
+            }
+            return colors;
+        }
+        
+        // Matrix for positioning player spheres
+        function mat4Translate(x, y, z) {
+            return new Float32Array([
+                1, 0, 0, 0,
+                0, 1, 0, 0,
+                0, 0, 1, 0,
+                x, y, z, 1
+            ]);
+        }
+        
+        function mat4Scale(s) {
+            return new Float32Array([
+                s, 0, 0, 0,
+                0, s, 0, 0,
+                0, 0, s, 0,
+                0, 0, 0, 1
+            ]);
+        }
+        
+        function mat4Multiply(a, b) {
+            const result = new Float32Array(16);
+            for (let i = 0; i < 4; i++) {
+                for (let j = 0; j < 4; j++) {
+                    result[j * 4 + i] = 
+                        a[i] * b[j * 4] +
+                        a[i + 4] * b[j * 4 + 1] +
+                        a[i + 8] * b[j * 4 + 2] +
+                        a[i + 12] * b[j * 4 + 3];
+                }
+            }
+            return result;
+        }
+        
+        // Create rotation matrix to orient pointer from +Z to look direction
+        function mat4FromLookDirection(forward, up) {
+            // forward is where the pointer should point
+            // up is the player's up direction (away from planet center)
+            const f = normalize(forward);
+            const r = normalize(cross(f, up));
+            const u = normalize(cross(r, f));
+            
+            // Rotation matrix: columns are right, up, forward
+            // But our pointer is along +Z, so we map:
+            // +X -> right, +Y -> up, +Z -> forward
+            return new Float32Array([
+                r[0], r[1], r[2], 0,
+                u[0], u[1], u[2], 0,
+                f[0], f[1], f[2], 0,
+                0, 0, 0, 1
+            ]);
+        }
+        
+        // Apply pitch to a horizontal forward direction
+        function applyPitchToForward(forward, up, pitch) {
+            // forward is horizontal (tangent to sphere), up is radial
+            // pitch rotates forward towards up (positive pitch = looking up)
+            const cosPitch = Math.cos(-pitch); // negative because our pitch convention
+            const sinPitch = Math.sin(-pitch);
+            
+            // Rotate forward around the right vector (cross of forward and up)
+            // Result: forward * cos(pitch) + up * sin(pitch)
+            return normalize([
+                forward[0] * cosPitch + up[0] * sinPitch,
+                forward[1] * cosPitch + up[1] * sinPitch,
+                forward[2] * cosPitch + up[2] * sinPitch
+            ]);
+        }
+        
+        // Project 3D world position to 2D screen coordinates
+        function projectToScreen(worldPos, viewMatrix, projMatrix) {
+            // Transform to clip space
+            let pos = [worldPos[0], worldPos[1], worldPos[2], 1];
+            
+            // Apply view matrix
+            let viewPos = [
+                viewMatrix[0] * pos[0] + viewMatrix[4] * pos[1] + viewMatrix[8] * pos[2] + viewMatrix[12],
+                viewMatrix[1] * pos[0] + viewMatrix[5] * pos[1] + viewMatrix[9] * pos[2] + viewMatrix[13],
+                viewMatrix[2] * pos[0] + viewMatrix[6] * pos[1] + viewMatrix[10] * pos[2] + viewMatrix[14],
+                viewMatrix[3] * pos[0] + viewMatrix[7] * pos[1] + viewMatrix[11] * pos[2] + viewMatrix[15]
+            ];
+            
+            // Apply projection matrix
+            let clipPos = [
+                projMatrix[0] * viewPos[0] + projMatrix[4] * viewPos[1] + projMatrix[8] * viewPos[2] + projMatrix[12] * viewPos[3],
+                projMatrix[1] * viewPos[0] + projMatrix[5] * viewPos[1] + projMatrix[9] * viewPos[2] + projMatrix[13] * viewPos[3],
+                projMatrix[2] * viewPos[0] + projMatrix[6] * viewPos[1] + projMatrix[10] * viewPos[2] + projMatrix[14] * viewPos[3],
+                projMatrix[3] * viewPos[0] + projMatrix[7] * viewPos[1] + projMatrix[11] * viewPos[2] + projMatrix[15] * viewPos[3]
+            ];
+            
+            // Behind camera check
+            if (clipPos[3] <= 0) return null;
+            
+            // Perspective divide to NDC
+            const ndcX = clipPos[0] / clipPos[3];
+            const ndcY = clipPos[1] / clipPos[3];
+            const ndcZ = clipPos[2] / clipPos[3];
+            
+            // Check if in view frustum
+            if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1 || ndcZ < -1 || ndcZ > 1) {
+                return null;
+            }
+            
+            // Convert to screen coordinates
+            const screenX = (ndcX + 1) * 0.5 * canvas.width;
+            const screenY = (1 - ndcY) * 0.5 * canvas.height; // Flip Y
+            
+            return { x: screenX, y: screenY, depth: ndcZ };
+        }
+        
+        // Draw nametag for a player
+        function drawNametag(playerId, screenPos, color) {
+            const shortId = playerId.substring(0, 8);
+            
+            ctx.font = 'bold 14px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            
+            // Draw background
+            const textWidth = ctx.measureText(shortId).width;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(screenPos.x - textWidth / 2 - 4, screenPos.y - 20, textWidth + 8, 18);
+            
+            // Draw text with player color
+            ctx.fillStyle = `rgb(${Math.floor(color.r * 255)}, ${Math.floor(color.g * 255)}, ${Math.floor(color.b * 255)})`;
+            ctx.fillText(shortId, screenPos.x, screenPos.y - 5);
+        }
+
         // Player state
         const player = {
             position: [0, PLANET_RADIUS + PLAYER_HEIGHT, 0],
@@ -853,6 +1245,9 @@
 
             // Update physics
             updatePhysics(dt);
+            
+            // Send position to server
+            sendPositionUpdate();
 
             // Update UI
             const p = player.position;
@@ -869,6 +1264,9 @@
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
             gl.enable(gl.DEPTH_TEST);
             gl.enable(gl.CULL_FACE);
+            
+            // Clear label canvas
+            ctx.clearRect(0, 0, labelCanvas.width, labelCanvas.height);
 
             // Use program
             gl.useProgram(program);
@@ -891,6 +1289,80 @@
             // Draw trees
             gl.bindVertexArray(treeVao);
             gl.drawElements(gl.TRIANGLES, treeMesh.indices.length, gl.UNSIGNED_INT, 0);
+
+            // Draw other players
+            gl.bindVertexArray(playerSphereVao);
+            const vertexCount = playerSphereMesh.vertices.length / 3;
+            const pointerVertexCount = pointerMesh.vertices.length / 3;
+            
+            otherPlayers.forEach((otherPlayer) => {
+                // Create color array for this player
+                const colorArray = createColorArray(otherPlayer.color, vertexCount);
+                gl.bindBuffer(gl.ARRAY_BUFFER, playerSphereColorBuf);
+                gl.bufferData(gl.ARRAY_BUFFER, colorArray, gl.DYNAMIC_DRAW);
+                
+                // Create model matrix for this player (translate to position, scale)
+                const pos = otherPlayer.position;
+                const translateMat = mat4Translate(pos[0], pos[1], pos[2]);
+                const scaleMat = mat4Scale(PLAYER_SPHERE_RADIUS);
+                const playerModel = mat4Multiply(translateMat, scaleMat);
+                
+                gl.uniformMatrix4fv(uniforms.model, false, playerModel);
+                gl.bindVertexArray(playerSphereVao);
+                gl.drawElements(gl.TRIANGLES, playerSphereMesh.indices.length, gl.UNSIGNED_INT, 0);
+                
+                // Draw look direction pointer
+                const playerUp = normalize(pos);
+                let lookDir = otherPlayer.forward || [0, 0, -1];
+                // Ensure lookDir is normalized and tangent to sphere
+                lookDir = subtract(lookDir, scale(playerUp, dot(lookDir, playerUp)));
+                if (length(lookDir) < 0.001) {
+                    lookDir = [0, 0, -1]; // Fallback
+                }
+                lookDir = normalize(lookDir);
+                
+                // Apply pitch to get the actual 3D look direction
+                const pitch = otherPlayer.pitch || 0;
+                const lookDir3D = applyPitchToForward(lookDir, playerUp, pitch);
+                
+                // Create rotation matrix to orient pointer
+                const rotMat = mat4FromLookDirection(lookDir3D, playerUp);
+                const pointerTranslate = mat4Translate(pos[0], pos[1], pos[2]);
+                const pointerModel = mat4Multiply(pointerTranslate, rotMat);
+                
+                // Slightly darker color for pointer
+                const pointerColor = {
+                    r: otherPlayer.color.r * 0.7,
+                    g: otherPlayer.color.g * 0.7,
+                    b: otherPlayer.color.b * 0.7
+                };
+                const pointerColorArray = createColorArray(pointerColor, pointerVertexCount);
+                
+                gl.bindVertexArray(pointerVao);
+                gl.bindBuffer(gl.ARRAY_BUFFER, pointerColorBuf);
+                gl.bufferData(gl.ARRAY_BUFFER, pointerColorArray, gl.DYNAMIC_DRAW);
+                gl.uniformMatrix4fv(uniforms.model, false, pointerModel);
+                gl.drawElements(gl.TRIANGLES, pointerMesh.indices.length, gl.UNSIGNED_INT, 0);
+                
+                // Draw nametag above player
+                const nametagPos = [pos[0], pos[1], pos[2]];
+                // Offset nametag above the sphere (in the direction away from planet center)
+                const upDir = normalize(pos);
+                nametagPos[0] += upDir[0] * (PLAYER_SPHERE_RADIUS + 1.5);
+                nametagPos[1] += upDir[1] * (PLAYER_SPHERE_RADIUS + 1.5);
+                nametagPos[2] += upDir[2] * (PLAYER_SPHERE_RADIUS + 1.5);
+                
+                const screenPos = projectToScreen(nametagPos, view, projection);
+                if (screenPos) {
+                    drawNametag(otherPlayer.id, screenPos, otherPlayer.color);
+                }
+            });
+            
+            // Update player count
+            document.getElementById('playerCount').textContent = otherPlayers.size + 1;
+            
+            // Reset model matrix
+            gl.uniformMatrix4fv(uniforms.model, false, model);
 
             requestAnimationFrame(render);
         }
