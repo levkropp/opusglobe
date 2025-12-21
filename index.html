@@ -75,6 +75,111 @@
             height: 2px;
             top: 9px;
         }
+        
+        /* Mobile touch controls */
+        .touch-controls {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 40vh;
+            pointer-events: none;
+            z-index: 100;
+        }
+        
+        @media (max-width: 768px), (pointer: coarse) {
+            .touch-controls {
+                display: flex;
+            }
+            #instructions {
+                display: none !important;
+            }
+            #crosshair {
+                display: none;
+            }
+            #ui {
+                font-size: 11px;
+                padding: 6px;
+            }
+        }
+        
+        .trackpad {
+            width: 50%;
+            height: 100%;
+            pointer-events: auto;
+            position: relative;
+        }
+        
+        .trackpad-inner {
+            position: absolute;
+            bottom: 20px;
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .trackpad-left .trackpad-inner {
+            left: 20px;
+        }
+        
+        .trackpad-right .trackpad-inner {
+            right: 20px;
+        }
+        
+        .trackpad-thumb {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.4);
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        
+        .trackpad-label {
+            position: absolute;
+            bottom: 150px;
+            color: rgba(255, 255, 255, 0.5);
+            font-family: sans-serif;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        
+        .trackpad-left .trackpad-label {
+            left: 40px;
+        }
+        
+        .trackpad-right .trackpad-label {
+            right: 40px;
+        }
+        
+        .jump-button {
+            position: absolute;
+            bottom: 160px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            pointer-events: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: rgba(255, 255, 255, 0.6);
+            font-family: sans-serif;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        
+        .jump-button:active {
+            background: rgba(255, 255, 255, 0.4);
+        }
     </style>
 </head>
 <body>
@@ -95,6 +200,23 @@
         <p>ESC - Release mouse</p>
     </div>
     <div id="crosshair"></div>
+    
+    <!-- Mobile touch controls -->
+    <div class="touch-controls" id="touchControls">
+        <div class="trackpad trackpad-left" id="moveTrackpad">
+            <span class="trackpad-label">Move</span>
+            <div class="trackpad-inner">
+                <div class="trackpad-thumb" id="moveThumb"></div>
+            </div>
+        </div>
+        <div class="trackpad trackpad-right" id="lookTrackpad">
+            <span class="trackpad-label">Look</span>
+            <div class="trackpad-inner">
+                <div class="trackpad-thumb" id="lookThumb"></div>
+            </div>
+            <div class="jump-button" id="jumpButton">JUMP</div>
+        </div>
+    </div>
 
     <script type="module">
         // WebAssembly module for physics calculations
@@ -1061,6 +1183,301 @@
         // Input state
         const keys = {};
         let mouseLocked = false;
+        
+        // Touch control state
+        const touchState = {
+            move: { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0, touchId: null },
+            look: { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0, touchId: null },
+            jump: false
+        };
+        
+        // Check if touch controls should be visible (reactive check)
+        function areTouchControlsVisible() {
+            const touchControls = document.getElementById('touchControls');
+            if (!touchControls) return false;
+            return window.getComputedStyle(touchControls).display !== 'none';
+        }
+        
+        // Touch control elements
+        const moveTrackpad = document.getElementById('moveTrackpad');
+        const lookTrackpad = document.getElementById('lookTrackpad');
+        const moveThumb = document.getElementById('moveThumb');
+        const lookThumb = document.getElementById('lookThumb');
+        const jumpButton = document.getElementById('jumpButton');
+        const moveInner = moveTrackpad?.querySelector('.trackpad-inner');
+        const lookInner = lookTrackpad?.querySelector('.trackpad-inner');
+        
+        // Trackpad dimensions
+        const TRACKPAD_RADIUS = 60; // Half of trackpad-inner size
+        const THUMB_MAX_OFFSET = 35; // Max distance thumb can move from center
+        
+        function updateThumbPosition(thumb, offsetX, offsetY) {
+            if (!thumb) return;
+            const clampedX = Math.max(-THUMB_MAX_OFFSET, Math.min(THUMB_MAX_OFFSET, offsetX));
+            const clampedY = Math.max(-THUMB_MAX_OFFSET, Math.min(THUMB_MAX_OFFSET, offsetY));
+            thumb.style.transform = `translate(calc(-50% + ${clampedX}px), calc(-50% + ${clampedY}px))`;
+        }
+        
+        function resetThumbPosition(thumb) {
+            if (!thumb) return;
+            thumb.style.transform = 'translate(-50%, -50%)';
+        }
+        
+        // Move trackpad handlers (touch + mouse)
+        if (moveTrackpad) {
+            // Touch events
+            moveTrackpad.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const touch = e.changedTouches[0];
+                touchState.move.active = true;
+                touchState.move.touchId = touch.identifier;
+                touchState.move.startX = touch.clientX;
+                touchState.move.startY = touch.clientY;
+                touchState.move.currentX = touch.clientX;
+                touchState.move.currentY = touch.clientY;
+            }, { passive: false });
+            
+            moveTrackpad.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                for (const touch of e.changedTouches) {
+                    if (touch.identifier === touchState.move.touchId) {
+                        touchState.move.currentX = touch.clientX;
+                        touchState.move.currentY = touch.clientY;
+                        const offsetX = touchState.move.currentX - touchState.move.startX;
+                        const offsetY = touchState.move.currentY - touchState.move.startY;
+                        updateThumbPosition(moveThumb, offsetX, offsetY);
+                    }
+                }
+            }, { passive: false });
+            
+            moveTrackpad.addEventListener('touchend', (e) => {
+                for (const touch of e.changedTouches) {
+                    if (touch.identifier === touchState.move.touchId) {
+                        touchState.move.active = false;
+                        touchState.move.touchId = null;
+                        resetThumbPosition(moveThumb);
+                    }
+                }
+            });
+            
+            moveTrackpad.addEventListener('touchcancel', (e) => {
+                touchState.move.active = false;
+                touchState.move.touchId = null;
+                resetThumbPosition(moveThumb);
+            });
+            
+            // Mouse events for move trackpad
+            moveTrackpad.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                touchState.move.active = true;
+                touchState.move.touchId = 'mouse';
+                touchState.move.startX = e.clientX;
+                touchState.move.startY = e.clientY;
+                touchState.move.currentX = e.clientX;
+                touchState.move.currentY = e.clientY;
+            });
+        }
+        
+        // Look trackpad handlers (touch + mouse)
+        if (lookTrackpad) {
+            // Touch events
+            lookTrackpad.addEventListener('touchstart', (e) => {
+                // Check if it's not the jump button
+                if (e.target === jumpButton || jumpButton?.contains(e.target)) return;
+                
+                e.preventDefault();
+                const touch = e.changedTouches[0];
+                touchState.look.active = true;
+                touchState.look.touchId = touch.identifier;
+                touchState.look.startX = touch.clientX;
+                touchState.look.startY = touch.clientY;
+                touchState.look.currentX = touch.clientX;
+                touchState.look.currentY = touch.clientY;
+            }, { passive: false });
+            
+            lookTrackpad.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                for (const touch of e.changedTouches) {
+                    if (touch.identifier === touchState.look.touchId) {
+                        const deltaX = touch.clientX - touchState.look.currentX;
+                        const deltaY = touch.clientY - touchState.look.currentY;
+                        touchState.look.currentX = touch.clientX;
+                        touchState.look.currentY = touch.clientY;
+                        
+                        // Apply look rotation (same as mouse)
+                        applyLookDelta(-deltaX * 0.004, deltaY * 0.004);
+                        
+                        const offsetX = touchState.look.currentX - touchState.look.startX;
+                        const offsetY = touchState.look.currentY - touchState.look.startY;
+                        updateThumbPosition(lookThumb, offsetX * 0.3, offsetY * 0.3);
+                    }
+                }
+            }, { passive: false });
+            
+            lookTrackpad.addEventListener('touchend', (e) => {
+                for (const touch of e.changedTouches) {
+                    if (touch.identifier === touchState.look.touchId) {
+                        touchState.look.active = false;
+                        touchState.look.touchId = null;
+                        resetThumbPosition(lookThumb);
+                    }
+                }
+            });
+            
+            lookTrackpad.addEventListener('touchcancel', (e) => {
+                touchState.look.active = false;
+                touchState.look.touchId = null;
+                resetThumbPosition(lookThumb);
+            });
+            
+            // Mouse events for look trackpad
+            lookTrackpad.addEventListener('mousedown', (e) => {
+                if (e.target === jumpButton || jumpButton?.contains(e.target)) return;
+                e.preventDefault();
+                touchState.look.active = true;
+                touchState.look.touchId = 'mouse';
+                touchState.look.startX = e.clientX;
+                touchState.look.startY = e.clientY;
+                touchState.look.currentX = e.clientX;
+                touchState.look.currentY = e.clientY;
+            });
+        }
+        
+        // Global mouse move and up handlers for trackpads
+        document.addEventListener('mousemove', (e) => {
+            // Handle move trackpad mouse drag
+            if (touchState.move.active && touchState.move.touchId === 'mouse') {
+                touchState.move.currentX = e.clientX;
+                touchState.move.currentY = e.clientY;
+                const offsetX = touchState.move.currentX - touchState.move.startX;
+                const offsetY = touchState.move.currentY - touchState.move.startY;
+                updateThumbPosition(moveThumb, offsetX, offsetY);
+            }
+            
+            // Handle look trackpad mouse drag
+            if (touchState.look.active && touchState.look.touchId === 'mouse') {
+                const deltaX = e.clientX - touchState.look.currentX;
+                const deltaY = e.clientY - touchState.look.currentY;
+                touchState.look.currentX = e.clientX;
+                touchState.look.currentY = e.clientY;
+                
+                // Apply look rotation
+                applyLookDelta(-deltaX * 0.004, deltaY * 0.004);
+                
+                const offsetX = touchState.look.currentX - touchState.look.startX;
+                const offsetY = touchState.look.currentY - touchState.look.startY;
+                updateThumbPosition(lookThumb, offsetX * 0.3, offsetY * 0.3);
+            }
+        });
+        
+        document.addEventListener('mouseup', (e) => {
+            if (touchState.move.touchId === 'mouse') {
+                touchState.move.active = false;
+                touchState.move.touchId = null;
+                resetThumbPosition(moveThumb);
+            }
+            if (touchState.look.touchId === 'mouse') {
+                touchState.look.active = false;
+                touchState.look.touchId = null;
+                resetThumbPosition(lookThumb);
+            }
+        });
+        
+        // Jump button handlers (touch + mouse)
+        if (jumpButton) {
+            jumpButton.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                touchState.jump = true;
+            }, { passive: false });
+            
+            jumpButton.addEventListener('touchend', (e) => {
+                touchState.jump = false;
+            });
+            
+            jumpButton.addEventListener('touchcancel', (e) => {
+                touchState.jump = false;
+            });
+            
+            // Mouse events for jump button
+            jumpButton.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                touchState.jump = true;
+            });
+            
+            jumpButton.addEventListener('mouseup', (e) => {
+                touchState.jump = false;
+            });
+            
+            jumpButton.addEventListener('mouseleave', (e) => {
+                touchState.jump = false;
+            });
+        }
+        
+        // Function to apply look rotation (shared between mouse and touch)
+        function applyLookDelta(yawDelta, pitchDelta) {
+            // Rotate forward vector around up axis for yaw
+            const up = normalize(player.position);
+            const cosYaw = Math.cos(yawDelta);
+            const sinYaw = Math.sin(yawDelta);
+            
+            // Rodrigues rotation formula around up axis
+            let forward = player.forward;
+            const forwardDotUp = dot(forward, up);
+            forward = subtract(forward, scale(up, forwardDotUp)); // ensure tangent
+            if (length(forward) > 0.001) {
+                forward = normalize(forward);
+                const rotated = add(
+                    scale(forward, cosYaw),
+                    scale(cross(up, forward), sinYaw)
+                );
+                player.forward = normalize(rotated);
+            }
+            
+            // Update pitch
+            player.pitch += pitchDelta;
+            player.pitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, player.pitch));
+        }
+        
+        // Get movement input from keyboard or touch
+        function getMovementInput() {
+            let moveX = 0; // left/right
+            let moveY = 0; // forward/back
+            
+            // Keyboard input (disabled when touch controls are visible)
+            if (!areTouchControlsVisible()) {
+                if (keys['KeyW']) moveY += 1;
+                if (keys['KeyS']) moveY -= 1;
+                if (keys['KeyD']) moveX += 1;
+                if (keys['KeyA']) moveX -= 1;
+            }
+            
+            // Touch input
+            if (touchState.move.active) {
+                const dx = touchState.move.currentX - touchState.move.startX;
+                const dy = touchState.move.currentY - touchState.move.startY;
+                // Normalize to -1 to 1 range, with deadzone
+                const deadzone = 10;
+                const maxDistance = 50;
+                
+                if (Math.abs(dx) > deadzone) {
+                    moveX += Math.max(-1, Math.min(1, (dx - Math.sign(dx) * deadzone) / maxDistance));
+                }
+                if (Math.abs(dy) > deadzone) {
+                    moveY -= Math.max(-1, Math.min(1, (dy - Math.sign(dy) * deadzone) / maxDistance));
+                }
+            }
+            
+            return { x: Math.max(-1, Math.min(1, moveX)), y: Math.max(-1, Math.min(1, moveY)) };
+        }
+        
+        // Check if jump is requested
+        function isJumpPressed() {
+            // Keyboard jump disabled when touch controls are visible
+            const keyboardJump = !areTouchControlsVisible() && keys['Space'];
+            return keyboardJump || touchState.jump;
+        }
 
         document.addEventListener('keydown', e => {
             keys[e.code] = true;
@@ -1069,37 +1486,17 @@
         document.addEventListener('keyup', e => keys[e.code] = false);
 
         document.addEventListener('mousemove', e => {
-            if (mouseLocked) {
-                const yawDelta = -e.movementX * 0.002;
-                const pitchDelta = e.movementY * 0.002;
-                
-                // Rotate forward vector around up axis for yaw
-                const up = normalize(player.position);
-                const cosYaw = Math.cos(yawDelta);
-                const sinYaw = Math.sin(yawDelta);
-                
-                // Rodrigues rotation formula around up axis
-                let forward = player.forward;
-                const forwardDotUp = dot(forward, up);
-                forward = subtract(forward, scale(up, forwardDotUp)); // ensure tangent
-                if (length(forward) > 0.001) {
-                    forward = normalize(forward);
-                    const rotated = add(
-                        scale(forward, cosYaw),
-                        scale(cross(up, forward), sinYaw)
-                    );
-                    player.forward = normalize(rotated);
-                }
-                
-                // Update pitch (this is just a viewing angle, not affecting forward)
-                player.pitch += pitchDelta;
-                player.pitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, player.pitch));
+            if (mouseLocked && !areTouchControlsVisible()) {
+                applyLookDelta(-e.movementX * 0.002, e.movementY * 0.002);
             }
         });
 
         const instructions = document.getElementById('instructions');
         canvas.addEventListener('click', () => {
-            canvas.requestPointerLock();
+            // Don't request pointer lock when touch controls are visible
+            if (!areTouchControlsVisible()) {
+                canvas.requestPointerLock();
+            }
         });
 
         document.addEventListener('pointerlockchange', () => {
@@ -1135,12 +1532,18 @@
             // Calculate right vector (forward is now the look direction directly)
             const right = normalize(cross(forward, up));
             
-            // Movement input - use forward and right directly (no yaw, it's baked into forward)
+            // Movement input - use getMovementInput for keyboard and touch support
+            const moveInput = getMovementInput();
             let moveDir = [0, 0, 0];
-            if (keys['KeyW']) moveDir = add(moveDir, forward);
-            if (keys['KeyS']) moveDir = subtract(moveDir, forward);
-            if (keys['KeyD']) moveDir = add(moveDir, right);
-            if (keys['KeyA']) moveDir = subtract(moveDir, right);
+            
+            // Forward/back (moveInput.y)
+            if (moveInput.y !== 0) {
+                moveDir = add(moveDir, scale(forward, moveInput.y));
+            }
+            // Left/right (moveInput.x)
+            if (moveInput.x !== 0) {
+                moveDir = add(moveDir, scale(right, moveInput.x));
+            }
             
             if (length(moveDir) > 0) {
                 moveDir = normalize(moveDir);
@@ -1155,8 +1558,8 @@
                 player.velocity = add(verticalVel, scale(horizontalVel, 0.9));
             }
             
-            // Jumping
-            if (keys['Space'] && player.grounded) {
+            // Jumping - use isJumpPressed for keyboard and touch support
+            if (isJumpPressed() && player.grounded) {
                 player.velocity = add(player.velocity, scale(up, JUMP_VELOCITY));
                 player.grounded = false;
             }
