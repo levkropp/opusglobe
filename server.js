@@ -44,6 +44,9 @@ const wss = new WebSocketServer({ server });
 // Store connected players
 const players = new Map();
 
+// Store world block changes (delta from procedural generation)
+const worldChanges = new Map(); // key: `${face}_${layer}` -> blockType
+
 // Generate UUID
 function generateUUID() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -123,6 +126,16 @@ wss.on('connection', (ws) => {
         }
     });
     
+    // Send world block changes to new player
+    if (worldChanges.size > 0) {
+        const changes = [];
+        for (const [key, block] of worldChanges) {
+            const [face, layer] = key.split('_').map(Number);
+            changes.push({ face, layer, block });
+        }
+        ws.send(JSON.stringify({ type: 'worldState', changes }));
+    }
+
     // Notify other players about new player
     broadcast({
         type: 'playerJoin',
@@ -138,7 +151,16 @@ wss.on('connection', (ws) => {
         try {
             const data = JSON.parse(message);
             
-            if (data.type === 'position') {
+            if (data.type === 'blockChange') {
+                const key = `${data.face}_${data.layer}`;
+                worldChanges.set(key, data.block);
+                broadcast({
+                    type: 'blockChange',
+                    face: data.face,
+                    layer: data.layer,
+                    block: data.block
+                }, playerId);
+            } else if (data.type === 'position') {
                 // Update stored position
                 playerData.position = data.position;
                 playerData.forward = data.forward;

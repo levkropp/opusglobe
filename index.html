@@ -3,256 +3,154 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spherical Planet Simulation</title>
+    <title>Voxel Globe</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        body {
-            overflow: hidden;
-            background: #000;
-        }
-        canvas {
-            display: block;
-        }
-        #labelCanvas {
-            position: fixed;
-            top: 0;
-            left: 0;
-            pointer-events: none;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #000; }
+        canvas { display: block; }
+        #labelCanvas { position: fixed; top: 0; left: 0; pointer-events: none; }
         #ui {
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            color: white;
-            font-family: monospace;
-            font-size: 14px;
-            background: rgba(0,0,0,0.5);
-            padding: 10px;
-            border-radius: 5px;
+            position: fixed; top: 10px; left: 10px; color: white;
+            font-family: monospace; font-size: 14px;
+            background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px;
             pointer-events: none;
         }
         #instructions {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-family: sans-serif;
-            text-align: center;
-            background: rgba(0,0,0,0.8);
-            padding: 30px;
-            border-radius: 10px;
-            cursor: pointer;
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; font-family: sans-serif; text-align: center;
+            background: rgba(0,0,0,0.8); padding: 30px; border-radius: 10px; cursor: pointer;
         }
-        #instructions.hidden {
-            display: none;
-        }
+        #instructions.hidden { display: none; }
         #crosshair {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 20px;
-            height: 20px;
-            pointer-events: none;
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 24px; height: 24px; pointer-events: none;
         }
         #crosshair::before, #crosshair::after {
-            content: '';
-            position: absolute;
-            background: rgba(255,255,255,0.7);
+            content: ''; position: absolute; background: rgba(255,255,255,0.8);
         }
-        #crosshair::before {
-            width: 2px;
-            height: 20px;
-            left: 9px;
+        #crosshair::before { width: 2px; height: 24px; left: 11px; }
+        #crosshair::after { width: 24px; height: 2px; top: 11px; }
+        #loading {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; font-family: monospace; font-size: 18px;
+            background: rgba(0,0,0,0.9); padding: 40px; border-radius: 10px;
+            text-align: center; z-index: 1000;
         }
-        #crosshair::after {
-            width: 20px;
-            height: 2px;
-            top: 9px;
+        #loading .bar { width: 300px; height: 20px; background: #333; border-radius: 10px; margin-top: 15px; }
+        #loading .fill { height: 100%; background: #4a4; border-radius: 10px; width: 0%; transition: width 0.1s; }
+        #hotbar {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 4px; z-index: 50; pointer-events: none;
         }
-        
-        /* Mobile touch controls */
-        .touch-controls {
-            display: none;
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: 40vh;
-            pointer-events: none;
-            z-index: 100;
-        }
-        
-        @media (max-width: 768px), (pointer: coarse) {
-            .touch-controls {
-                display: flex;
-            }
-            #instructions {
-                display: none !important;
-            }
-            #crosshair {
-                display: none;
-            }
-            #ui {
-                font-size: 11px;
-                padding: 6px;
-            }
-        }
-        
-        .trackpad {
-            width: 50%;
-            height: 100%;
-            pointer-events: auto;
+        .hotbar-slot {
+            width: 48px; height: 48px; border: 2px solid rgba(255,255,255,0.3);
+            background: rgba(0,0,0,0.5); border-radius: 4px;
+            display: flex; align-items: center; justify-content: center;
             position: relative;
         }
-        
+        .hotbar-slot.selected { border-color: white; background: rgba(255,255,255,0.15); }
+        .hotbar-slot .block-preview {
+            width: 30px; height: 30px; border-radius: 3px;
+        }
+        .hotbar-slot .key-hint {
+            position: absolute; top: 2px; left: 4px; font-size: 10px;
+            color: rgba(255,255,255,0.6); font-family: monospace;
+        }
+
+        /* Mobile touch controls */
+        .touch-controls {
+            display: none; position: fixed; bottom: 0; left: 0; right: 0;
+            height: 40vh; pointer-events: none; z-index: 100;
+        }
+        @media (max-width: 768px), (pointer: coarse) {
+            .touch-controls { display: flex; }
+            #instructions { display: none !important; }
+            #crosshair { display: none; }
+            #ui { font-size: 11px; padding: 6px; }
+            #hotbar { bottom: 42vh; }
+        }
+        .trackpad {
+            width: 50%; height: 100%; pointer-events: auto; position: relative;
+        }
         .trackpad-inner {
-            position: absolute;
-            bottom: 20px;
-            width: 120px;
-            height: 120px;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.15);
-            border: 2px solid rgba(255, 255, 255, 0.3);
+            position: absolute; bottom: 20px; width: 120px; height: 120px;
+            border-radius: 50%; background: rgba(255,255,255,0.15);
+            border: 2px solid rgba(255,255,255,0.3);
         }
-        
-        .trackpad-left .trackpad-inner {
-            left: 20px;
-        }
-        
-        .trackpad-right .trackpad-inner {
-            right: 20px;
-        }
-        
+        .trackpad-left .trackpad-inner { left: 20px; }
+        .trackpad-right .trackpad-inner { right: 20px; }
         .trackpad-thumb {
-            position: absolute;
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.4);
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            pointer-events: none;
+            position: absolute; width: 50px; height: 50px; border-radius: 50%;
+            background: rgba(255,255,255,0.4); top: 50%; left: 50%;
+            transform: translate(-50%, -50%); pointer-events: none;
         }
-        
         .trackpad-label {
-            position: absolute;
-            bottom: 150px;
-            color: rgba(255, 255, 255, 0.5);
-            font-family: sans-serif;
-            font-size: 12px;
-            text-transform: uppercase;
+            position: absolute; bottom: 150px; color: rgba(255,255,255,0.5);
+            font-family: sans-serif; font-size: 12px; text-transform: uppercase;
         }
-        
-        .trackpad-left .trackpad-label {
-            left: 40px;
+        .trackpad-left .trackpad-label { left: 40px; }
+        .trackpad-right .trackpad-label { right: 40px; }
+        .jump-button, .break-button, .place-button {
+            position: absolute; width: 60px; height: 60px; border-radius: 50%;
+            background: rgba(255,255,255,0.2); border: 2px solid rgba(255,255,255,0.4);
+            pointer-events: auto; display: flex; align-items: center; justify-content: center;
+            color: rgba(255,255,255,0.6); font-family: sans-serif; font-size: 11px; font-weight: bold;
         }
-        
-        .trackpad-right .trackpad-label {
-            right: 40px;
-        }
-        
-        .jump-button {
-            position: absolute;
-            bottom: 160px;
-            right: 30px;
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            background: rgba(255, 255, 255, 0.2);
-            border: 2px solid rgba(255, 255, 255, 0.4);
-            pointer-events: auto;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: rgba(255, 255, 255, 0.6);
-            font-family: sans-serif;
-            font-size: 11px;
-            font-weight: bold;
-        }
-        
-        .jump-button:active {
-            background: rgba(255, 255, 255, 0.4);
-        }
+        .jump-button { bottom: 160px; right: 30px; }
+        .break-button { bottom: 230px; right: 30px; background: rgba(255,80,80,0.2); border-color: rgba(255,80,80,0.4); }
+        .place-button { bottom: 160px; right: 100px; background: rgba(80,180,80,0.2); border-color: rgba(80,180,80,0.4); }
+        .jump-button:active, .break-button:active, .place-button:active { background: rgba(255,255,255,0.4); }
     </style>
 </head>
 <body>
     <canvas id="canvas"></canvas>
     <canvas id="labelCanvas"></canvas>
+    <div id="loading">
+        <div>Generating world...</div>
+        <div class="bar"><div class="fill" id="loadingFill"></div></div>
+        <div id="loadingText" style="margin-top:8px;font-size:13px;color:#aaa;">0%</div>
+    </div>
     <div id="ui">
         <div>Position: <span id="pos">0, 0, 0</span></div>
-        <div>Latitude: <span id="lat">0</span>° Longitude: <span id="lon">0</span>°</div>
+        <div>Latitude: <span id="lat">0</span>&deg; Longitude: <span id="lon">0</span>&deg;</div>
         <div>Grounded: <span id="grounded">No</span></div>
         <div>Players: <span id="playerCount">1</span></div>
+        <div>Block: <span id="blockName">Grass</span></div>
     </div>
     <div id="instructions">
-        <h2>Spherical Planet Simulation</h2>
+        <h2>Voxel Globe</h2>
         <p><br>Click to start</p>
-        <p><br>WASD - Move</p>
-        <p>Space - Jump</p>
-        <p>Mouse - Look around</p>
-        <p>ESC - Release mouse</p>
+        <p><br>WASD - Move &nbsp; Space - Jump</p>
+        <p>Mouse - Look &nbsp; ESC - Release</p>
+        <p>Left Click - Break &nbsp; Right Click - Place</p>
+        <p>1-7 - Select block type</p>
     </div>
     <div id="crosshair"></div>
-    
-    <!-- Mobile touch controls -->
+    <div id="hotbar"></div>
+
     <div class="touch-controls" id="touchControls">
         <div class="trackpad trackpad-left" id="moveTrackpad">
             <span class="trackpad-label">Move</span>
-            <div class="trackpad-inner">
-                <div class="trackpad-thumb" id="moveThumb"></div>
-            </div>
+            <div class="trackpad-inner"><div class="trackpad-thumb" id="moveThumb"></div></div>
         </div>
         <div class="trackpad trackpad-right" id="lookTrackpad">
             <span class="trackpad-label">Look</span>
-            <div class="trackpad-inner">
-                <div class="trackpad-thumb" id="lookThumb"></div>
-            </div>
+            <div class="trackpad-inner"><div class="trackpad-thumb" id="lookThumb"></div></div>
             <div class="jump-button" id="jumpButton">JUMP</div>
+            <div class="break-button" id="breakButton">DIG</div>
+            <div class="place-button" id="placeButton">PUT</div>
         </div>
     </div>
 
     <script type="module">
-        // WebAssembly module for physics calculations
-        const wasmCode = new Uint8Array([
-            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // WASM header
-            0x01, 0x0f, 0x03, // Type section
-            0x60, 0x02, 0x7c, 0x7c, 0x01, 0x7c, // (f64, f64) -> f64
-            0x60, 0x01, 0x7c, 0x01, 0x7c, // (f64) -> f64
-            0x60, 0x03, 0x7c, 0x7c, 0x7c, 0x01, 0x7c, // (f64, f64, f64) -> f64
-            0x03, 0x04, 0x03, 0x00, 0x01, 0x02, // Function section: 3 functions
-            0x07, 0x1a, 0x03, // Export section
-            0x06, 0x6c, 0x65, 0x6e, 0x67, 0x74, 0x68, 0x00, 0x00, // "length"
-            0x04, 0x73, 0x71, 0x72, 0x74, 0x00, 0x01, // "sqrt"
-            0x06, 0x6c, 0x65, 0x6e, 0x67, 0x74, 0x68, 0x33, 0x00, 0x02, // "length3"
-            0x0a, 0x1e, 0x03, // Code section
-            0x09, 0x00, 0x20, 0x00, 0x20, 0x00, 0x9c, 0x20, 0x01, 0x20, 0x01, 0x9c, 0xa0, 0x9f, 0x0b, // length
-            0x05, 0x00, 0x20, 0x00, 0x9f, 0x0b, // sqrt
-            0x0f, 0x00, 0x20, 0x00, 0x20, 0x00, 0xa2, 0x20, 0x01, 0x20, 0x01, 0xa2, 0xa0, 0x20, 0x02, 0x20, 0x02, 0xa2, 0xa0, 0x9f, 0x0b // length3
-        ]);
-
-        // Initialize WASM (we'll use JS for main physics due to WASM complexity)
-        let wasmInstance = null;
-        
-        // WebGL setup
+        // ===== WEBGL SETUP =====
         const canvas = document.getElementById('canvas');
         const gl = canvas.getContext('webgl2');
-        
-        if (!gl) {
-            alert('WebGL2 not supported!');
-        }
+        if (!gl) alert('WebGL2 not supported!');
 
-        // Label canvas for nametags
         const labelCanvas = document.getElementById('labelCanvas');
         const ctx = labelCanvas.getContext('2d');
 
-        // Resize canvas
         function resize() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -263,20 +161,17 @@
         window.addEventListener('resize', resize);
         resize();
 
-        // Shader sources
+        // ===== SHADERS =====
         const vertexShaderSource = `#version 300 es
             in vec3 aPosition;
             in vec3 aNormal;
             in vec3 aColor;
-            
             uniform mat4 uProjection;
             uniform mat4 uView;
             uniform mat4 uModel;
-            
             out vec3 vNormal;
             out vec3 vColor;
             out vec3 vPosition;
-            
             void main() {
                 vec4 worldPos = uModel * vec4(aPosition, 1.0);
                 vPosition = worldPos.xyz;
@@ -288,39 +183,42 @@
 
         const fragmentShaderSource = `#version 300 es
             precision highp float;
-            
             in vec3 vNormal;
             in vec3 vColor;
             in vec3 vPosition;
-            
             uniform vec3 uLightDir;
             uniform vec3 uCameraPos;
-            
             out vec4 fragColor;
-            
             void main() {
                 vec3 normal = normalize(vNormal);
                 vec3 lightDir = normalize(uLightDir);
-                
-                // Ambient
-                float ambient = 0.3;
-                
-                // Diffuse
+                float ambient = 0.35;
                 float diff = max(dot(normal, lightDir), 0.0);
-                
-                // Simple lighting
-                vec3 color = vColor * (ambient + diff * 0.7);
-                
-                // Fog based on distance
+                vec3 color = vColor * (ambient + diff * 0.65);
                 float dist = length(vPosition - uCameraPos);
                 float fog = 1.0 - clamp(dist / 500.0, 0.0, 0.8);
                 color = mix(vec3(0.5, 0.7, 0.9), color, fog);
-                
                 fragColor = vec4(color, 1.0);
             }
         `;
 
-        // Compile shader
+        // Highlight shader for block wireframe
+        const highlightVertSource = `#version 300 es
+            in vec3 aPosition;
+            uniform mat4 uProjection;
+            uniform mat4 uView;
+            void main() {
+                gl_Position = uProjection * uView * vec4(aPosition, 1.0);
+            }
+        `;
+        const highlightFragSource = `#version 300 es
+            precision highp float;
+            out vec4 fragColor;
+            void main() {
+                fragColor = vec4(1.0, 1.0, 1.0, 0.9);
+            }
+        `;
+
         function createShader(gl, type, source) {
             const shader = gl.createShader(type);
             gl.shaderSource(shader, source);
@@ -333,7 +231,6 @@
             return shader;
         }
 
-        // Create program
         function createProgram(gl, vs, fs) {
             const program = gl.createProgram();
             gl.attachShader(program, vs);
@@ -350,7 +247,6 @@
         const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
         const program = createProgram(gl, vertexShader, fragmentShader);
 
-        // Get uniform locations
         const uniforms = {
             projection: gl.getUniformLocation(program, 'uProjection'),
             view: gl.getUniformLocation(program, 'uView'),
@@ -358,1130 +254,1035 @@
             lightDir: gl.getUniformLocation(program, 'uLightDir'),
             cameraPos: gl.getUniformLocation(program, 'uCameraPos')
         };
-
-        // Get attribute locations
         const attribs = {
             position: gl.getAttribLocation(program, 'aPosition'),
             normal: gl.getAttribLocation(program, 'aNormal'),
             color: gl.getAttribLocation(program, 'aColor')
         };
 
-        // Matrix utilities
+        // Highlight program
+        const hlVS = createShader(gl, gl.VERTEX_SHADER, highlightVertSource);
+        const hlFS = createShader(gl, gl.FRAGMENT_SHADER, highlightFragSource);
+        const hlProgram = createProgram(gl, hlVS, hlFS);
+        const hlUniforms = {
+            projection: gl.getUniformLocation(hlProgram, 'uProjection'),
+            view: gl.getUniformLocation(hlProgram, 'uView')
+        };
+        const hlAttribPos = gl.getAttribLocation(hlProgram, 'aPosition');
+
+        // ===== MATH UTILITIES =====
         function mat4Perspective(fov, aspect, near, far) {
             const f = 1.0 / Math.tan(fov / 2);
             const nf = 1 / (near - far);
-            return new Float32Array([
-                f / aspect, 0, 0, 0,
-                0, f, 0, 0,
-                0, 0, (far + near) * nf, -1,
-                0, 0, 2 * far * near * nf, 0
-            ]);
+            return new Float32Array([f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0]);
         }
-
         function mat4LookAt(eye, center, up) {
             const z = normalize(subtract(eye, center));
             const x = normalize(cross(up, z));
             const y = cross(z, x);
-            return new Float32Array([
-                x[0], y[0], z[0], 0,
-                x[1], y[1], z[1], 0,
-                x[2], y[2], z[2], 0,
-                -dot(x, eye), -dot(y, eye), -dot(z, eye), 1
-            ]);
+            return new Float32Array([x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0, -dot(x,eye),-dot(y,eye),-dot(z,eye),1]);
+        }
+        function mat4Identity() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); }
+        function mat4Translate(x,y,z) { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]); }
+        function mat4Scale(s) { return new Float32Array([s,0,0,0, 0,s,0,0, 0,0,s,0, 0,0,0,1]); }
+        function mat4Multiply(a, b) {
+            const r = new Float32Array(16);
+            for (let i = 0; i < 4; i++)
+                for (let j = 0; j < 4; j++)
+                    r[j*4+i] = a[i]*b[j*4] + a[i+4]*b[j*4+1] + a[i+8]*b[j*4+2] + a[i+12]*b[j*4+3];
+            return r;
         }
 
-        function mat4Identity() {
-            return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
-        }
-
-        // Vector utilities
-        function vec3(x, y, z) { return [x, y, z]; }
-        function add(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
-        function subtract(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
-        function scale(v, s) { return [v[0]*s, v[1]*s, v[2]*s]; }
-        function dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
-        function cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+        function vec3(x,y,z) { return [x,y,z]; }
+        function add(a,b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+        function subtract(a,b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+        function scale(v,s) { return [v[0]*s, v[1]*s, v[2]*s]; }
+        function dot(a,b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+        function cross(a,b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
         function length(v) { return Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]); }
         function normalize(v) { const l = length(v); return l > 0 ? [v[0]/l, v[1]/l, v[2]/l] : [0,0,0]; }
 
-        // Planet configuration
-        const PLANET_RADIUS = 100;
+        // ===== CONFIGURATION =====
+        // Cube-sphere: R=214, N=168, h=2.0 → cell side = Rπ/(2N) ≈ 2.001 → near-perfect cubes
+        const PLANET_RADIUS = 214;
         const PLAYER_HEIGHT = 2;
         const GRAVITY = 30;
         const MOVE_SPEED = 15;
         const JUMP_VELOCITY = 12;
+        const GRID_N = 168; // cells per cube face edge
+        const NUM_LAYERS = 15;
+        const SURFACE_LAYER = 7;
+        const BLOCK_HEIGHT = 2.0;
+        const INNER_RADIUS = PLANET_RADIUS - SURFACE_LAYER * BLOCK_HEIGHT; // 200
+        const CHUNK_N = 24; // cells per chunk edge
+        const CHUNKS_PER_EDGE = GRID_N / CHUNK_N; // 7
+        const CHUNKS_PER_FACE = CHUNKS_PER_EDGE * CHUNKS_PER_EDGE; // 49
+        const TOTAL_CHUNKS = 6 * CHUNKS_PER_FACE; // 294
+        const TOTAL_CELLS = 6 * GRID_N * GRID_N; // 169,344
+        const VIEW_ANGLE_COS = Math.cos(Math.PI / 3); // 60 degrees
 
-        // Generate planet mesh with land and water
-        function generatePlanet(radius, subdivisions) {
-            const vertices = [];
-            const normals = [];
-            const colors = [];
-            const indices = [];
+        // Block types
+        const BLOCK_AIR = 0;
+        const BLOCK_GRASS = 1;
+        const BLOCK_DIRT = 2;
+        const BLOCK_STONE = 3;
+        const BLOCK_WATER = 4;
+        const BLOCK_SAND = 5;
+        const BLOCK_WOOD = 6;
+        const BLOCK_LEAVES = 7;
 
-            // Noise function for terrain
-            function noise3D(x, y, z) {
-                const n = Math.sin(x * 1.5) * Math.cos(y * 1.3) * Math.sin(z * 1.7) +
-                         Math.sin(x * 3.1 + 1.2) * Math.cos(y * 2.7 + 0.8) * Math.sin(z * 2.9 + 1.5) * 0.5 +
-                         Math.sin(x * 5.3 + 2.1) * Math.cos(y * 4.9 + 1.7) * Math.sin(z * 5.1 + 2.3) * 0.25;
-                return n / 1.75;
-            }
+        const BLOCK_NAMES = ['Air', 'Grass', 'Dirt', 'Stone', 'Water', 'Sand', 'Wood', 'Leaves'];
+        const BLOCK_COLORS = [
+            [0,0,0],             // air (unused)
+            [0.3, 0.7, 0.2],    // grass top
+            [0.55, 0.35, 0.2],  // dirt
+            [0.5, 0.5, 0.5],    // stone
+            [0.2, 0.4, 0.8],    // water
+            [0.9, 0.85, 0.6],   // sand
+            [0.45, 0.28, 0.12], // wood
+            [0.15, 0.55, 0.15], // leaves
+        ];
+        // Grass side color (dirt-like)
+        const GRASS_SIDE_COLOR = [0.5, 0.38, 0.22];
 
-            function getTerrainType(x, y, z) {
-                const n = noise3D(x * 0.05, y * 0.05, z * 0.05);
-                return n > -0.1; // true = land, false = water
-            }
-
-            // Icosphere generation
+        // ===== ICOSPHERE TOPOLOGY =====
+        function buildIcosphereTopology(subdivisions) {
             const t = (1 + Math.sqrt(5)) / 2;
-            const icoVertices = [
-                [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
-                [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
-                [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]
+            let vertices = [
+                [-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],
+                [0,-1,t],[0,1,t],[0,-1,-t],[0,1,-t],
+                [t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]
             ].map(v => normalize(v));
 
-            const icoFaces = [
-                [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
-                [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
-                [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
-                [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]
+            let faces = [
+                [0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],
+                [1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],
+                [3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],
+                [4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]
             ];
 
-            // Subdivide
-            let currentVertices = [...icoVertices];
-            let currentFaces = [...icoFaces];
-            const midpointCache = {};
+            // Track parent-child for hierarchy and chunk assignment
+            // faceLevel[level] = array of face index arrays
+            const faceLevels = [faces.map((_, i) => i)]; // level 0: faces 0-19
 
+            const midpointCache = {};
             function getMidpoint(i1, i2) {
                 const key = i1 < i2 ? `${i1}_${i2}` : `${i2}_${i1}`;
                 if (midpointCache[key] !== undefined) return midpointCache[key];
-                const v1 = currentVertices[i1];
-                const v2 = currentVertices[i2];
+                const v1 = vertices[i1], v2 = vertices[i2];
                 const mid = normalize([(v1[0]+v2[0])/2, (v1[1]+v2[1])/2, (v1[2]+v2[2])/2]);
-                currentVertices.push(mid);
-                midpointCache[key] = currentVertices.length - 1;
+                vertices.push(mid);
+                midpointCache[key] = vertices.length - 1;
                 return midpointCache[key];
             }
 
-            for (let i = 0; i < subdivisions; i++) {
+            // faceChildren[faceIdx] = [child0, child1, child2, child3] at next level
+            const faceChildren = [];
+
+            for (let level = 0; level < subdivisions; level++) {
                 const newFaces = [];
-                for (const face of currentFaces) {
+                const levelIndices = [];
+                for (let fi = 0; fi < faces.length; fi++) {
+                    const face = faces[fi];
                     const a = getMidpoint(face[0], face[1]);
                     const b = getMidpoint(face[1], face[2]);
                     const c = getMidpoint(face[2], face[0]);
+
+                    const startIdx = newFaces.length;
                     newFaces.push([face[0], a, c]);
                     newFaces.push([face[1], b, a]);
                     newFaces.push([face[2], c, b]);
                     newFaces.push([a, b, c]);
-                }
-                currentFaces = newFaces;
-            }
 
-            // Build mesh
-            for (const face of currentFaces) {
-                const v0 = currentVertices[face[0]];
-                const v1 = currentVertices[face[1]];
-                const v2 = currentVertices[face[2]];
-                
-                // Center of face for color determination
-                const center = normalize([(v0[0]+v1[0]+v2[0])/3, (v0[1]+v1[1]+v2[1])/3, (v0[2]+v1[2]+v2[2])/3]);
-                const isLand = getTerrainType(center[0] * radius, center[1] * radius, center[2] * radius);
-                
-                // Color
-                let color;
-                if (isLand) {
-                    // Green variations for land
-                    const variation = (noise3D(center[0]*10, center[1]*10, center[2]*10) + 1) * 0.5;
-                    color = [0.2 + variation * 0.15, 0.5 + variation * 0.3, 0.15 + variation * 0.1];
-                } else {
-                    // Blue variations for water
-                    const variation = (noise3D(center[0]*5, center[1]*5, center[2]*5) + 1) * 0.5;
-                    color = [0.1 + variation * 0.1, 0.3 + variation * 0.2, 0.6 + variation * 0.3];
+                    faceChildren[fi + (level > 0 ? faces.length - newFaces.length + startIdx : 0)] = undefined; // placeholder
+                    // We track by absolute face index across all levels
                 }
 
-                const baseIndex = vertices.length / 3;
-                
-                for (const v of [v0, v1, v2]) {
-                    vertices.push(v[0] * radius, v[1] * radius, v[2] * radius);
-                    normals.push(v[0], v[1], v[2]);
-                    colors.push(color[0], color[1], color[2]);
+                // Build children mapping: each old face -> 4 new faces
+                // Old faces are indexed 0..faces.length-1 at current level
+                // New faces will be indexed 0..newFaces.length-1 at next level
+                const childMap = new Array(faces.length);
+                for (let fi = 0; fi < faces.length; fi++) {
+                    childMap[fi] = [fi * 4, fi * 4 + 1, fi * 4 + 2, fi * 4 + 3];
                 }
-                
-                indices.push(baseIndex, baseIndex + 1, baseIndex + 2);
+
+                faceLevels.push(newFaces.map((_, i) => i));
+                faces = newFaces;
+
+                // Store children mapping for this level
+                if (!buildIcosphereTopology._childMaps) buildIcosphereTopology._childMaps = [];
+                buildIcosphereTopology._childMaps[level] = childMap;
             }
+
+            const faceCount = faces.length;
+            const vertexCount = vertices.length;
+
+            // Build flat arrays
+            const vertArray = new Float64Array(vertexCount * 3);
+            for (let i = 0; i < vertexCount; i++) {
+                vertArray[i*3] = vertices[i][0];
+                vertArray[i*3+1] = vertices[i][1];
+                vertArray[i*3+2] = vertices[i][2];
+            }
+
+            const faceArray = new Uint32Array(faceCount * 3);
+            for (let i = 0; i < faceCount; i++) {
+                faceArray[i*3] = faces[i][0];
+                faceArray[i*3+1] = faces[i][1];
+                faceArray[i*3+2] = faces[i][2];
+            }
+
+            // Compute face centers
+            const faceCenters = new Float64Array(faceCount * 3);
+            for (let i = 0; i < faceCount; i++) {
+                const v0 = faces[i][0], v1 = faces[i][1], v2 = faces[i][2];
+                const cx = (vertices[v0][0] + vertices[v1][0] + vertices[v2][0]) / 3;
+                const cy = (vertices[v0][1] + vertices[v1][1] + vertices[v2][1]) / 3;
+                const cz = (vertices[v0][2] + vertices[v1][2] + vertices[v2][2]) / 3;
+                const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
+                faceCenters[i*3] = cx/cl;
+                faceCenters[i*3+1] = cy/cl;
+                faceCenters[i*3+2] = cz/cl;
+            }
+
+            // Build face adjacency via edge map
+            const edgeMap = new Map();
+            function edgeKey(a, b) { return a < b ? (a * vertexCount + b) : (b * vertexCount + a); }
+
+            for (let i = 0; i < faceCount; i++) {
+                const v0 = faces[i][0], v1 = faces[i][1], v2 = faces[i][2];
+                const edges = [[v0,v1],[v1,v2],[v2,v0]];
+                for (let e = 0; e < 3; e++) {
+                    const key = edgeKey(edges[e][0], edges[e][1]);
+                    if (!edgeMap.has(key)) {
+                        edgeMap.set(key, []);
+                    }
+                    edgeMap.get(key).push({ face: i, edge: e });
+                }
+            }
+
+            const faceNeighbors = new Int32Array(faceCount * 3).fill(-1);
+            for (const [, entries] of edgeMap) {
+                if (entries.length === 2) {
+                    const a = entries[0], b = entries[1];
+                    faceNeighbors[a.face * 3 + a.edge] = b.face;
+                    faceNeighbors[b.face * 3 + b.edge] = a.face;
+                }
+            }
+
+            // Chunk assignment: trace ancestry to CHUNK_LEVEL
+            // At level 0 we have 20 faces. Each subdivision multiplies by 4.
+            // At CHUNK_LEVEL=2 we have 20*4^2=320 chunks.
+            // Each final face maps to one chunk.
+            // Strategy: for each final face, trace back through child maps to find level-2 ancestor.
+            const chunkCount = 20 * Math.pow(4, CHUNK_LEVEL); // 320
+            const facesPerChunk = Math.pow(4, subdivisions - CHUNK_LEVEL); // 4^3 = 64
+            const faceToChunk = new Uint16Array(faceCount);
+
+            // Build forward mapping: for each level-2 face, find all level-5 descendants
+            // Using the child maps
+            const childMaps = buildIcosphereTopology._childMaps;
+
+            // Start with chunk-level faces (level CHUNK_LEVEL has chunkCount faces)
+            // Trace forward to final level
+            function getDescendants(faceIdx, fromLevel, toLevel) {
+                if (fromLevel === toLevel) return [faceIdx];
+                const children = childMaps[fromLevel];
+                if (!children || !children[faceIdx]) return [faceIdx];
+                const result = [];
+                for (const child of children[faceIdx]) {
+                    result.push(...getDescendants(child, fromLevel + 1, toLevel));
+                }
+                return result;
+            }
+
+            const chunkFaces = new Array(chunkCount);
+            const chunkCenters = new Float64Array(chunkCount * 3);
+
+            for (let c = 0; c < chunkCount; c++) {
+                const descendants = getDescendants(c, CHUNK_LEVEL, subdivisions);
+                chunkFaces[c] = new Uint32Array(descendants);
+                for (const f of descendants) {
+                    faceToChunk[f] = c;
+                }
+                // Chunk center = average of face centers
+                let cx = 0, cy = 0, cz = 0;
+                for (const f of descendants) {
+                    cx += faceCenters[f*3];
+                    cy += faceCenters[f*3+1];
+                    cz += faceCenters[f*3+2];
+                }
+                const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
+                chunkCenters[c*3] = cx/cl;
+                chunkCenters[c*3+1] = cy/cl;
+                chunkCenters[c*3+2] = cz/cl;
+            }
+
+            // Build hierarchical lookup: for each face at each level, store its 4 children
+            // We need: level 0 (20 faces) -> level 1 (80) -> ... -> level 5 (20480)
+            const hierarchy = [];
+            for (let level = 0; level < subdivisions; level++) {
+                hierarchy[level] = childMaps[level];
+            }
+
+            // Clean up
+            delete buildIcosphereTopology._childMaps;
 
             return {
-                vertices: new Float32Array(vertices),
-                normals: new Float32Array(normals),
-                colors: new Float32Array(colors),
-                indices: new Uint32Array(indices)
+                vertices, vertArray, vertexCount,
+                faces, faceArray, faceCount,
+                faceCenters, faceNeighbors,
+                faceToChunk, chunkFaces, chunkCenters, chunkCount,
+                hierarchy, facesPerChunk
             };
         }
 
-        // Generate trees on land
-        function generateTrees(radius, count) {
-            const treePositions = [];
-            
-            // Noise function (same as planet)
-            function noise3D(x, y, z) {
-                const n = Math.sin(x * 1.5) * Math.cos(y * 1.3) * Math.sin(z * 1.7) +
-                         Math.sin(x * 3.1 + 1.2) * Math.cos(y * 2.7 + 0.8) * Math.sin(z * 2.9 + 1.5) * 0.5 +
-                         Math.sin(x * 5.3 + 2.1) * Math.cos(y * 4.9 + 1.7) * Math.sin(z * 5.1 + 2.3) * 0.25;
-                return n / 1.75;
+        // ===== FACE LOOKUP (centroid-based hierarchical descent) =====
+        function buildFaceLookup(topo) {
+            // Build face centroids at each subdivision level using compact Float64Arrays.
+            // This avoids storing full face vertex arrays (which would be huge at level 7).
+            const t = (1 + Math.sqrt(5)) / 2;
+            let verts = [
+                [-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],
+                [0,-1,t],[0,1,t],[0,-1,-t],[0,1,-t],
+                [t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]
+            ].map(v => normalize(v));
+            let faces = [
+                [0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],
+                [1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],
+                [3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],
+                [4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]
+            ];
+
+            function computeCentroids(faceList) {
+                const c = new Float64Array(faceList.length * 3);
+                for (let i = 0; i < faceList.length; i++) {
+                    const f = faceList[i];
+                    const v0 = verts[f[0]], v1 = verts[f[1]], v2 = verts[f[2]];
+                    let cx = (v0[0]+v1[0]+v2[0])/3, cy = (v0[1]+v1[1]+v2[1])/3, cz = (v0[2]+v1[2]+v2[2])/3;
+                    const cl = Math.sqrt(cx*cx+cy*cy+cz*cz);
+                    c[i*3] = cx/cl; c[i*3+1] = cy/cl; c[i*3+2] = cz/cl;
+                }
+                return c;
             }
 
-            function getTerrainType(x, y, z) {
-                const n = noise3D(x * 0.05, y * 0.05, z * 0.05);
-                return n > -0.1; // true = land, false = water
+            const levelCentroids = [computeCentroids(faces)];
+            const mc = {};
+            function gm(a,b) {
+                const k = a<b ? a*200000+b : b*200000+a; // numeric key for speed
+                if (mc[k] !== undefined) return mc[k];
+                const v1=verts[a], v2=verts[b];
+                verts.push(normalize([(v1[0]+v2[0])/2,(v1[1]+v2[1])/2,(v1[2]+v2[2])/2]));
+                mc[k] = verts.length-1;
+                return mc[k];
             }
-            
-            // Seed random for consistent tree placement
+
+            for (let level = 0; level < SUBDIVISIONS; level++) {
+                const nf = [];
+                for (const f of faces) {
+                    const a=gm(f[0],f[1]), b=gm(f[1],f[2]), c=gm(f[2],f[0]);
+                    nf.push([f[0],a,c], [f[1],b,a], [f[2],c,b], [a,b,c]);
+                }
+                faces = nf;
+                levelCentroids.push(computeCentroids(faces));
+            }
+
+            // Free intermediate data
+            verts = null; faces = null;
+
+            const numLevels = levelCentroids.length; // SUBDIVISIONS + 1
+
+            return function findClosestFace(dir) {
+                const dx = dir[0], dy = dir[1], dz = dir[2];
+                // Level 0: test all 20 base faces
+                let c0 = levelCentroids[0];
+                let best = 0, bestDot = dx*c0[0] + dy*c0[1] + dz*c0[2];
+                for (let i = 1; i < 20; i++) {
+                    const d = dx*c0[i*3] + dy*c0[i*3+1] + dz*c0[i*3+2];
+                    if (d > bestDot) { bestDot = d; best = i; }
+                }
+                // Descend through levels
+                for (let level = 1; level < numLevels; level++) {
+                    const cl = levelCentroids[level];
+                    const base = best * 4;
+                    best = base;
+                    bestDot = dx*cl[base*3] + dy*cl[base*3+1] + dz*cl[base*3+2];
+                    for (let c = 1; c < 4; c++) {
+                        const idx = (base + c) * 3;
+                        const d = dx*cl[idx] + dy*cl[idx+1] + dz*cl[idx+2];
+                        if (d > bestDot) { bestDot = d; best = base + c; }
+                    }
+                }
+                return best;
+            };
+        }
+
+        // ===== WORLD DATA & TERRAIN =====
+        function noise3D(x, y, z) {
+            const n = Math.sin(x*1.5)*Math.cos(y*1.3)*Math.sin(z*1.7) +
+                      Math.sin(x*3.1+1.2)*Math.cos(y*2.7+0.8)*Math.sin(z*2.9+1.5)*0.5 +
+                      Math.sin(x*5.3+2.1)*Math.cos(y*4.9+1.7)*Math.sin(z*5.1+2.3)*0.25;
+            return n / 1.75;
+        }
+
+        function generateTerrain(topo, worldBlocks) {
+            for (let f = 0; f < topo.faceCount; f++) {
+                const cx = topo.faceCenters[f*3];
+                const cy = topo.faceCenters[f*3+1];
+                const cz = topo.faceCenters[f*3+2];
+                const px = cx * PLANET_RADIUS;
+                const py = cy * PLANET_RADIUS;
+                const pz = cz * PLANET_RADIUS;
+
+                const heightNoise = noise3D(px * 0.05, py * 0.05, pz * 0.05);
+                const surfaceLayer = SURFACE_LAYER + Math.round(heightNoise * 3);
+                const isLow = surfaceLayer < SURFACE_LAYER - 1;
+
+                for (let layer = 0; layer < NUM_LAYERS; layer++) {
+                    if (layer > surfaceLayer) {
+                        if (isLow && layer <= SURFACE_LAYER) {
+                            worldBlocks[f * NUM_LAYERS + layer] = BLOCK_WATER;
+                        } else {
+                            worldBlocks[f * NUM_LAYERS + layer] = BLOCK_AIR;
+                        }
+                    } else if (layer === surfaceLayer) {
+                        worldBlocks[f * NUM_LAYERS + layer] = isLow ? BLOCK_SAND : BLOCK_GRASS;
+                    } else if (layer > surfaceLayer - 3) {
+                        worldBlocks[f * NUM_LAYERS + layer] = BLOCK_DIRT;
+                    } else {
+                        worldBlocks[f * NUM_LAYERS + layer] = BLOCK_STONE;
+                    }
+                }
+            }
+
+            // Place trees
             let seed = 12345;
             function seededRandom() {
                 seed = (seed * 1103515245 + 12345) & 0x7fffffff;
                 return seed / 0x7fffffff;
             }
-            
-            // Generate random points on sphere, keep only those on land
-            let attempts = 0;
-            while (treePositions.length < count && attempts < count * 10) {
-                attempts++;
-                
-                // Random point on sphere using spherical coordinates
-                const theta = seededRandom() * Math.PI * 2;
-                const phi = Math.acos(2 * seededRandom() - 1);
-                
-                const x = Math.sin(phi) * Math.cos(theta);
-                const y = Math.cos(phi);
-                const z = Math.sin(phi) * Math.sin(theta);
-                
-                const pos = [x * radius, y * radius, z * radius];
-                
-                // Check if on land
-                if (getTerrainType(pos[0], pos[1], pos[2])) {
-                    // Add some variation to tree size
-                    const scale = 0.7 + seededRandom() * 0.6;
-                    treePositions.push({ pos: [x, y, z], scale });
+            let treesPlaced = 0;
+            for (let f = 0; f < topo.faceCount && treesPlaced < 300; f++) {
+                if (seededRandom() > 0.02) continue; // ~2% chance per face
+                // Check if surface is grass and has room
+                let surfLayer = -1;
+                for (let l = NUM_LAYERS - 1; l >= 0; l--) {
+                    if (worldBlocks[f * NUM_LAYERS + l] !== BLOCK_AIR && worldBlocks[f * NUM_LAYERS + l] !== BLOCK_WATER) {
+                        surfLayer = l;
+                        break;
+                    }
                 }
+                if (surfLayer < 0 || worldBlocks[f * NUM_LAYERS + surfLayer] !== BLOCK_GRASS) continue;
+                if (surfLayer + 4 >= NUM_LAYERS) continue;
+
+                // Place trunk (2 blocks)
+                worldBlocks[f * NUM_LAYERS + surfLayer + 1] = BLOCK_WOOD;
+                worldBlocks[f * NUM_LAYERS + surfLayer + 2] = BLOCK_WOOD;
+                // Place leaves on top
+                worldBlocks[f * NUM_LAYERS + surfLayer + 3] = BLOCK_LEAVES;
+                worldBlocks[f * NUM_LAYERS + surfLayer + 4] = BLOCK_LEAVES;
+                treesPlaced++;
             }
-            
-            return treePositions;
         }
-        
-        // Create tree mesh (combined trunk + foliage for all trees)
-        function createTreeMesh(treePositions, radius) {
-            const vertices = [];
+
+        function getBlock(worldBlocks, faceIdx, layer) {
+            if (layer < 0 || layer >= NUM_LAYERS) return layer < 0 ? BLOCK_STONE : BLOCK_AIR;
+            return worldBlocks[faceIdx * NUM_LAYERS + layer];
+        }
+
+        function setBlock(worldBlocks, faceIdx, layer, blockType) {
+            if (layer < 0 || layer >= NUM_LAYERS) return;
+            worldBlocks[faceIdx * NUM_LAYERS + layer] = blockType;
+        }
+
+        function layerInnerRadius(layer) { return INNER_RADIUS + layer * BLOCK_HEIGHT; }
+        function layerOuterRadius(layer) { return INNER_RADIUS + (layer + 1) * BLOCK_HEIGHT; }
+
+        function isTransparent(blockType) {
+            return blockType === BLOCK_AIR || blockType === BLOCK_WATER;
+        }
+
+        // ===== CHUNK MESH BUILDER =====
+        function buildChunkMesh(chunk, topo, worldBlocks) {
+            const positions = [];
             const normals = [];
             const colors = [];
             const indices = [];
-            
-            const TRUNK_HEIGHT = 1.5;
-            const TRUNK_RADIUS = 0.2;
-            const FOLIAGE_HEIGHT = 2.5;
-            const FOLIAGE_RADIUS = 1.2;
-            const TRUNK_SEGMENTS = 6;
-            const FOLIAGE_SEGMENTS = 8;
-            
-            const trunkColor = [0.4, 0.25, 0.1];
-            const foliageColor = [0.1, 0.5, 0.15];
-            
-            for (const tree of treePositions) {
-                const baseIndex = vertices.length / 3;
-                const surfacePos = scale(tree.pos, radius);
-                const up = tree.pos; // normalized direction from center
-                const treeScale = tree.scale;
-                
-                // Create orthonormal basis for tree orientation
-                let tempVec = Math.abs(up[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
-                const right = normalize(cross(tempVec, up));
-                const forward = normalize(cross(up, right));
-                
-                // Helper to transform local coords to world coords
-                function toWorld(localX, localY, localZ) {
-                    return [
-                        surfacePos[0] + (right[0] * localX + up[0] * localY + forward[0] * localZ) * treeScale,
-                        surfacePos[1] + (right[1] * localX + up[1] * localY + forward[1] * localZ) * treeScale,
-                        surfacePos[2] + (right[2] * localX + up[2] * localY + forward[2] * localZ) * treeScale
-                    ];
-                }
-                
-                function toWorldNormal(localX, localY, localZ) {
-                    return normalize([
-                        right[0] * localX + up[0] * localY + forward[0] * localZ,
-                        right[1] * localX + up[1] * localY + forward[1] * localZ,
-                        right[2] * localX + up[2] * localY + forward[2] * localZ
-                    ]);
-                }
-                
-                // Generate trunk (cylinder)
-                const trunkBaseIdx = vertices.length / 3;
-                for (let i = 0; i <= TRUNK_SEGMENTS; i++) {
-                    const angle = (i / TRUNK_SEGMENTS) * Math.PI * 2;
-                    const cos = Math.cos(angle);
-                    const sin = Math.sin(angle);
-                    
-                    // Bottom vertex
-                    const bottom = toWorld(cos * TRUNK_RADIUS, 0, sin * TRUNK_RADIUS);
-                    const bottomNorm = toWorldNormal(cos, 0, sin);
-                    vertices.push(...bottom);
-                    normals.push(...bottomNorm);
-                    colors.push(...trunkColor);
-                    
-                    // Top vertex
-                    const top = toWorld(cos * TRUNK_RADIUS, TRUNK_HEIGHT, sin * TRUNK_RADIUS);
-                    vertices.push(...top);
-                    normals.push(...bottomNorm);
-                    colors.push(...trunkColor);
-                }
-                
-                // Trunk indices
-                for (let i = 0; i < TRUNK_SEGMENTS; i++) {
-                    const i0 = trunkBaseIdx + i * 2;
-                    const i1 = trunkBaseIdx + i * 2 + 1;
-                    const i2 = trunkBaseIdx + i * 2 + 2;
-                    const i3 = trunkBaseIdx + i * 2 + 3;
-                    indices.push(i0, i2, i1);
-                    indices.push(i1, i2, i3);
-                }
-                
-                // Generate foliage (cone)
-                const foliageBaseIdx = vertices.length / 3;
-                
-                // Cone tip
-                const tip = toWorld(0, TRUNK_HEIGHT + FOLIAGE_HEIGHT, 0);
-                vertices.push(...tip);
-                normals.push(...up);
-                colors.push(...foliageColor);
-                const tipIdx = foliageBaseIdx;
-                
-                // Cone base vertices
-                for (let i = 0; i <= FOLIAGE_SEGMENTS; i++) {
-                    const angle = (i / FOLIAGE_SEGMENTS) * Math.PI * 2;
-                    const cos = Math.cos(angle);
-                    const sin = Math.sin(angle);
-                    
-                    const baseVert = toWorld(cos * FOLIAGE_RADIUS, TRUNK_HEIGHT, sin * FOLIAGE_RADIUS);
-                    // Cone normal points outward and up
-                    const coneNorm = toWorldNormal(cos * 0.7, 0.7, sin * 0.7);
-                    vertices.push(...baseVert);
-                    normals.push(...coneNorm);
-                    colors.push(...foliageColor);
-                }
-                
-                // Foliage cone indices
-                for (let i = 0; i < FOLIAGE_SEGMENTS; i++) {
-                    const i0 = tipIdx;
-                    const i1 = foliageBaseIdx + 1 + i;
-                    const i2 = foliageBaseIdx + 1 + i + 1;
-                    indices.push(i0, i2, i1);
-                }
-                
-                // Cone bottom cap
-                const capCenterIdx = vertices.length / 3;
-                const capCenter = toWorld(0, TRUNK_HEIGHT, 0);
-                const downNorm = toWorldNormal(0, -1, 0);
-                vertices.push(...capCenter);
-                normals.push(...downNorm);
-                colors.push(...foliageColor);
-                
-                for (let i = 0; i < FOLIAGE_SEGMENTS; i++) {
-                    const i1 = foliageBaseIdx + 1 + i;
-                    const i2 = foliageBaseIdx + 1 + i + 1;
-                    indices.push(capCenterIdx, i1, i2);
+            let vertCount = 0;
+
+            function pushVert(pos, norm, col) {
+                positions.push(pos[0], pos[1], pos[2]);
+                normals.push(norm[0], norm[1], norm[2]);
+                colors.push(col[0], col[1], col[2]);
+                return vertCount++;
+            }
+
+            function emitTri(p0, p1, p2, norm, col) {
+                const i0 = pushVert(p0, norm, col);
+                const i1 = pushVert(p1, norm, col);
+                const i2 = pushVert(p2, norm, col);
+                indices.push(i0, i1, i2);
+            }
+
+            function emitQuad(p0, p1, p2, p3, norm, col) {
+                const i0 = pushVert(p0, norm, col);
+                const i1 = pushVert(p1, norm, col);
+                const i2 = pushVert(p2, norm, col);
+                const i3 = pushVert(p3, norm, col);
+                indices.push(i0, i1, i2, i0, i2, i3);
+            }
+
+            for (const faceIdx of chunk.faceIndices) {
+                const vi0 = topo.faceArray[faceIdx * 3];
+                const vi1 = topo.faceArray[faceIdx * 3 + 1];
+                const vi2 = topo.faceArray[faceIdx * 3 + 2];
+                const d0 = topo.vertices[vi0];
+                const d1 = topo.vertices[vi1];
+                const d2 = topo.vertices[vi2];
+
+                const n0 = topo.faceNeighbors[faceIdx * 3];
+                const n1 = topo.faceNeighbors[faceIdx * 3 + 1];
+                const n2 = topo.faceNeighbors[faceIdx * 3 + 2];
+
+                const faceCenter = [
+                    topo.faceCenters[faceIdx*3],
+                    topo.faceCenters[faceIdx*3+1],
+                    topo.faceCenters[faceIdx*3+2]
+                ];
+
+                for (let layer = 0; layer < NUM_LAYERS; layer++) {
+                    const block = getBlock(worldBlocks, faceIdx, layer);
+                    if (block === BLOCK_AIR) continue;
+                    if (block === BLOCK_WATER) continue; // skip water rendering for now
+
+                    const rI = layerInnerRadius(layer);
+                    const rO = layerOuterRadius(layer);
+
+                    const topColor = (block === BLOCK_GRASS) ? BLOCK_COLORS[BLOCK_GRASS] : BLOCK_COLORS[block];
+                    const sideColor = (block === BLOCK_GRASS) ? GRASS_SIDE_COLOR : BLOCK_COLORS[block];
+
+                    // 6 corner positions
+                    const p0i = scale(d0, rI), p1i = scale(d1, rI), p2i = scale(d2, rI);
+                    const p0o = scale(d0, rO), p1o = scale(d1, rO), p2o = scale(d2, rO);
+
+                    // Top face (outer) - check block above
+                    const above = getBlock(worldBlocks, faceIdx, layer + 1);
+                    if (isTransparent(above)) {
+                        emitTri(p0o, p1o, p2o, faceCenter, topColor);
+                    }
+
+                    // Bottom face (inner) - check block below
+                    const below = getBlock(worldBlocks, faceIdx, layer - 1);
+                    if (isTransparent(below)) {
+                        const negCenter = scale(faceCenter, -1);
+                        emitTri(p0i, p2i, p1i, negCenter, sideColor);
+                    }
+
+                    // Side faces: normal = outward from face center toward edge midpoint
+                    // Side face 0: edge v0-v1, neighbor n0
+                    if (n0 >= 0 && isTransparent(getBlock(worldBlocks, n0, layer))) {
+                        const em0 = normalize([(d0[0]+d1[0])/2,(d0[1]+d1[1])/2,(d0[2]+d1[2])/2]);
+                        const sn0 = normalize([em0[0]-faceCenter[0],em0[1]-faceCenter[1],em0[2]-faceCenter[2]]);
+                        const tn0 = cross(subtract(p1i, p0i), subtract(p1o, p0i));
+                        if (dot(tn0, sn0) > 0) {
+                            emitQuad(p0i, p1i, p1o, p0o, sn0, sideColor);
+                        } else {
+                            emitQuad(p0i, p0o, p1o, p1i, sn0, sideColor);
+                        }
+                    }
+
+                    // Side face 1: edge v1-v2, neighbor n1
+                    if (n1 >= 0 && isTransparent(getBlock(worldBlocks, n1, layer))) {
+                        const em1 = normalize([(d1[0]+d2[0])/2,(d1[1]+d2[1])/2,(d1[2]+d2[2])/2]);
+                        const sn1 = normalize([em1[0]-faceCenter[0],em1[1]-faceCenter[1],em1[2]-faceCenter[2]]);
+                        const tn1 = cross(subtract(p2i, p1i), subtract(p2o, p1i));
+                        if (dot(tn1, sn1) > 0) {
+                            emitQuad(p1i, p2i, p2o, p1o, sn1, sideColor);
+                        } else {
+                            emitQuad(p1i, p1o, p2o, p2i, sn1, sideColor);
+                        }
+                    }
+
+                    // Side face 2: edge v2-v0, neighbor n2
+                    if (n2 >= 0 && isTransparent(getBlock(worldBlocks, n2, layer))) {
+                        const em2 = normalize([(d2[0]+d0[0])/2,(d2[1]+d0[1])/2,(d2[2]+d0[2])/2]);
+                        const sn2 = normalize([em2[0]-faceCenter[0],em2[1]-faceCenter[1],em2[2]-faceCenter[2]]);
+                        const tn2 = cross(subtract(p0i, p2i), subtract(p0o, p2i));
+                        if (dot(tn2, sn2) > 0) {
+                            emitQuad(p2i, p0i, p0o, p2o, sn2, sideColor);
+                        } else {
+                            emitQuad(p2i, p2o, p0o, p0i, sn2, sideColor);
+                        }
+                    }
                 }
             }
-            
-            return {
-                vertices: new Float32Array(vertices),
-                normals: new Float32Array(normals),
-                colors: new Float32Array(colors),
-                indices: new Uint32Array(indices)
-            };
+
+            // Upload to GPU
+            if (indices.length === 0) {
+                chunk.indexCount = 0;
+                chunk.dirty = false;
+                return;
+            }
+
+            if (!chunk.vao) {
+                chunk.vao = gl.createVertexArray();
+                chunk.posBuf = gl.createBuffer();
+                chunk.normBuf = gl.createBuffer();
+                chunk.colorBuf = gl.createBuffer();
+                chunk.idxBuf = gl.createBuffer();
+            }
+
+            gl.bindVertexArray(chunk.vao);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, chunk.posBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.DYNAMIC_DRAW);
+            gl.enableVertexAttribArray(attribs.position);
+            gl.vertexAttribPointer(attribs.position, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, chunk.normBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(normals), gl.DYNAMIC_DRAW);
+            gl.enableVertexAttribArray(attribs.normal);
+            gl.vertexAttribPointer(attribs.normal, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, chunk.colorBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.DYNAMIC_DRAW);
+            gl.enableVertexAttribArray(attribs.color);
+            gl.vertexAttribPointer(attribs.color, 3, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, chunk.idxBuf);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint32Array(indices), gl.DYNAMIC_DRAW);
+
+            chunk.indexCount = indices.length;
+            chunk.dirty = false;
         }
 
-        // Create planet
-        const planet = generatePlanet(PLANET_RADIUS, 5);
-        
-        // Create trees
-        const treePositions = generateTrees(PLANET_RADIUS, 500);
-        const treeMesh = createTreeMesh(treePositions, PLANET_RADIUS);
-        
-        // Create VAO
-        const vao = gl.createVertexArray();
-        gl.bindVertexArray(vao);
+        // ===== BLOCK HIGHLIGHT =====
+        let hlVao = null, hlPosBuf = null, hlIdxBuf = null;
+        function initHighlight() {
+            hlVao = gl.createVertexArray();
+            hlPosBuf = gl.createBuffer();
+            hlIdxBuf = gl.createBuffer();
+            gl.bindVertexArray(hlVao);
+            gl.bindBuffer(gl.ARRAY_BUFFER, hlPosBuf);
+            gl.enableVertexAttribArray(hlAttribPos);
+            gl.vertexAttribPointer(hlAttribPos, 3, gl.FLOAT, false, 0, 0);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hlIdxBuf);
+        }
 
-        // Position buffer
-        const posBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, planet.vertices, gl.STATIC_DRAW);
-        gl.enableVertexAttribArray(attribs.position);
-        gl.vertexAttribPointer(attribs.position, 3, gl.FLOAT, false, 0, 0);
+        function drawBlockHighlight(faceIdx, layer, topo, viewMat, projMat) {
+            const vi0 = topo.faceArray[faceIdx * 3];
+            const vi1 = topo.faceArray[faceIdx * 3 + 1];
+            const vi2 = topo.faceArray[faceIdx * 3 + 2];
+            const d0 = topo.vertices[vi0];
+            const d1 = topo.vertices[vi1];
+            const d2 = topo.vertices[vi2];
+            const rI = layerInnerRadius(layer);
+            const rO = layerOuterRadius(layer);
 
-        // Normal buffer
-        const normBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, normBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, planet.normals, gl.STATIC_DRAW);
-        gl.enableVertexAttribArray(attribs.normal);
-        gl.vertexAttribPointer(attribs.normal, 3, gl.FLOAT, false, 0, 0);
+            // 6 corners slightly expanded outward for visibility
+            const expand = 1.002;
+            const verts = [
+                ...scale(d0, rI * expand), ...scale(d1, rI * expand), ...scale(d2, rI * expand),
+                ...scale(d0, rO * expand), ...scale(d1, rO * expand), ...scale(d2, rO * expand),
+            ];
+            const lineIndices = [
+                0,1, 1,2, 2,0,  // inner triangle
+                3,4, 4,5, 5,3,  // outer triangle
+                0,3, 1,4, 2,5   // vertical edges
+            ];
 
-        // Color buffer
-        const colorBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, planet.colors, gl.STATIC_DRAW);
-        gl.enableVertexAttribArray(attribs.color);
-        gl.vertexAttribPointer(attribs.color, 3, gl.FLOAT, false, 0, 0);
+            gl.useProgram(hlProgram);
+            gl.uniformMatrix4fv(hlUniforms.projection, false, projMat);
+            gl.uniformMatrix4fv(hlUniforms.view, false, viewMat);
 
-        // Index buffer
-        const indexBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, planet.indices, gl.STATIC_DRAW);
+            gl.bindVertexArray(hlVao);
+            gl.bindBuffer(gl.ARRAY_BUFFER, hlPosBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.DYNAMIC_DRAW);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, hlIdxBuf);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(lineIndices), gl.DYNAMIC_DRAW);
 
-        // Create Tree VAO
-        const treeVao = gl.createVertexArray();
-        gl.bindVertexArray(treeVao);
+            gl.disable(gl.DEPTH_TEST);
+            gl.drawElements(gl.LINES, lineIndices.length, gl.UNSIGNED_SHORT, 0);
+            gl.enable(gl.DEPTH_TEST);
+        }
 
-        // Tree position buffer
-        const treePosBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, treePosBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, treeMesh.vertices, gl.STATIC_DRAW);
-        gl.enableVertexAttribArray(attribs.position);
-        gl.vertexAttribPointer(attribs.position, 3, gl.FLOAT, false, 0, 0);
+        // ===== RAYCASTING =====
+        function raycastBlock(origin, direction, maxDist, topo, worldBlocks, findFace) {
+            const STEP = 0.5;
+            let lastFace = -1, lastLayer = -1;
 
-        // Tree normal buffer
-        const treeNormBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, treeNormBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, treeMesh.normals, gl.STATIC_DRAW);
-        gl.enableVertexAttribArray(attribs.normal);
-        gl.vertexAttribPointer(attribs.normal, 3, gl.FLOAT, false, 0, 0);
+            for (let t = 0.5; t < maxDist; t += STEP) {
+                const px = origin[0] + direction[0] * t;
+                const py = origin[1] + direction[1] * t;
+                const pz = origin[2] + direction[2] * t;
+                const dist = Math.sqrt(px*px + py*py + pz*pz);
 
-        // Tree color buffer
-        const treeColorBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, treeColorBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, treeMesh.colors, gl.STATIC_DRAW);
-        gl.enableVertexAttribArray(attribs.color);
-        gl.vertexAttribPointer(attribs.color, 3, gl.FLOAT, false, 0, 0);
+                const layer = Math.floor((dist - INNER_RADIUS) / BLOCK_HEIGHT);
+                if (layer < 0 || layer >= NUM_LAYERS) {
+                    lastFace = -1; lastLayer = -1;
+                    continue;
+                }
 
-        // Tree index buffer
-        const treeIndexBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, treeIndexBuffer);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, treeMesh.indices, gl.STATIC_DRAW);
+                const il = 1/dist;
+                const face = findFace([px*il, py*il, pz*il]);
 
-        // Generate player sphere mesh (unit sphere, will be scaled and positioned per player)
+                const block = getBlock(worldBlocks, face, layer);
+                if (block !== BLOCK_AIR && block !== BLOCK_WATER) {
+                    return {
+                        hitFace: face, hitLayer: layer, hitBlock: block,
+                        placeFace: lastFace, placeLayer: lastLayer
+                    };
+                }
+                lastFace = face;
+                lastLayer = layer;
+            }
+            return null;
+        }
+
+        // ===== PLAYER SPHERE (for multiplayer) =====
         function generatePlayerSphere(segments) {
-            const vertices = [];
-            const normals = [];
-            const indices = [];
-            
+            const vertices = [], normals = [], indices = [];
             for (let lat = 0; lat <= segments; lat++) {
                 const theta = lat * Math.PI / segments;
-                const sinTheta = Math.sin(theta);
-                const cosTheta = Math.cos(theta);
-                
+                const sinT = Math.sin(theta), cosT = Math.cos(theta);
                 for (let lon = 0; lon <= segments; lon++) {
                     const phi = lon * 2 * Math.PI / segments;
-                    const sinPhi = Math.sin(phi);
-                    const cosPhi = Math.cos(phi);
-                    
-                    const x = cosPhi * sinTheta;
-                    const y = cosTheta;
-                    const z = sinPhi * sinTheta;
-                    
-                    vertices.push(x, y, z);
-                    normals.push(x, y, z);
+                    const x = Math.cos(phi)*sinT, y = cosT, z = Math.sin(phi)*sinT;
+                    vertices.push(x,y,z); normals.push(x,y,z);
                 }
             }
-            
-            for (let lat = 0; lat < segments; lat++) {
+            for (let lat = 0; lat < segments; lat++)
                 for (let lon = 0; lon < segments; lon++) {
-                    const first = lat * (segments + 1) + lon;
-                    const second = first + segments + 1;
-                    
-                    indices.push(first, second, first + 1);
-                    indices.push(second, second + 1, first + 1);
+                    const f = lat*(segments+1)+lon, s = f+segments+1;
+                    indices.push(f,s,f+1, s,s+1,f+1);
                 }
-            }
-            
-            return {
-                vertices: new Float32Array(vertices),
-                normals: new Float32Array(normals),
-                indices: new Uint32Array(indices)
-            };
+            return { vertices: new Float32Array(vertices), normals: new Float32Array(normals), indices: new Uint32Array(indices) };
         }
-        
+
         const playerSphereMesh = generatePlayerSphere(12);
-        
-        // Create player sphere VAO (geometry only, color set per-player)
+
+        // Player sphere VAO
         const playerSphereVao = gl.createVertexArray();
         gl.bindVertexArray(playerSphereVao);
-        
-        const playerSpherePosBuf = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, playerSpherePosBuf);
+        const psBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, psBuf);
         gl.bufferData(gl.ARRAY_BUFFER, playerSphereMesh.vertices, gl.STATIC_DRAW);
         gl.enableVertexAttribArray(attribs.position);
         gl.vertexAttribPointer(attribs.position, 3, gl.FLOAT, false, 0, 0);
-        
-        const playerSphereNormBuf = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, playerSphereNormBuf);
+        const psNBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, psNBuf);
         gl.bufferData(gl.ARRAY_BUFFER, playerSphereMesh.normals, gl.STATIC_DRAW);
         gl.enableVertexAttribArray(attribs.normal);
         gl.vertexAttribPointer(attribs.normal, 3, gl.FLOAT, false, 0, 0);
-        
-        // Color buffer for player sphere - will be updated per draw
-        const playerSphereColorBuf = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, playerSphereColorBuf);
+        const psCBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, psCBuf);
         gl.enableVertexAttribArray(attribs.color);
         gl.vertexAttribPointer(attribs.color, 3, gl.FLOAT, false, 0, 0);
-        
-        const playerSphereIdxBuf = gl.createBuffer();
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, playerSphereIdxBuf);
+        const psIBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, psIBuf);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, playerSphereMesh.indices, gl.STATIC_DRAW);
 
-        // Generate look direction pointer (cylinder pointing in +Z direction)
-        function generatePointerCylinder(radius, length, segments) {
-            const vertices = [];
-            const normals = [];
-            const indices = [];
-            
-            // Cylinder along Z axis, from 0 to length
+        // Pointer mesh
+        function generatePointerCylinder(radius, len, segments) {
+            const vertices = [], normals = [], indices = [];
             for (let i = 0; i <= segments; i++) {
-                const angle = (i / segments) * Math.PI * 2;
-                const cos = Math.cos(angle);
-                const sin = Math.sin(angle);
-                
-                // Back cap vertex (at z=0)
-                vertices.push(cos * radius, sin * radius, 0);
-                normals.push(cos, sin, 0);
-                
-                // Front vertex (at z=length)
-                vertices.push(cos * radius, sin * radius, length);
-                normals.push(cos, sin, 0);
+                const a = (i/segments)*Math.PI*2, c = Math.cos(a), s = Math.sin(a);
+                vertices.push(c*radius,s*radius,0); normals.push(c,s,0);
+                vertices.push(c*radius,s*radius,len); normals.push(c,s,0);
             }
-            
-            // Side faces
             for (let i = 0; i < segments; i++) {
-                const i0 = i * 2;
-                const i1 = i * 2 + 1;
-                const i2 = i * 2 + 2;
-                const i3 = i * 2 + 3;
-                indices.push(i0, i2, i1);
-                indices.push(i1, i2, i3);
+                const i0=i*2,i1=i*2+1,i2=i*2+2,i3=i*2+3;
+                indices.push(i0,i2,i1, i1,i2,i3);
             }
-            
-            // Front cap (cone tip for more character)
-            const tipIdx = vertices.length / 3;
-            vertices.push(0, 0, length + radius * 2); // Cone tip
-            normals.push(0, 0, 1);
-            
-            const frontCapStart = vertices.length / 3;
+            const ti = vertices.length/3;
+            vertices.push(0,0,len+radius*2); normals.push(0,0,1);
+            const fs = vertices.length/3;
             for (let i = 0; i <= segments; i++) {
-                const angle = (i / segments) * Math.PI * 2;
-                const cos = Math.cos(angle);
-                const sin = Math.sin(angle);
-                vertices.push(cos * radius, sin * radius, length);
-                // Cone normal pointing outward and forward
-                const nx = cos * 0.7;
-                const ny = sin * 0.7;
-                const nz = 0.7;
-                normals.push(nx, ny, nz);
+                const a=(i/segments)*Math.PI*2;
+                vertices.push(Math.cos(a)*radius,Math.sin(a)*radius,len);
+                normals.push(Math.cos(a)*0.7,Math.sin(a)*0.7,0.7);
             }
-            
-            for (let i = 0; i < segments; i++) {
-                indices.push(tipIdx, frontCapStart + i + 1, frontCapStart + i);
-            }
-            
-            return {
-                vertices: new Float32Array(vertices),
-                normals: new Float32Array(normals),
-                indices: new Uint32Array(indices)
-            };
+            for (let i = 0; i < segments; i++) indices.push(ti,fs+i+1,fs+i);
+            return { vertices: new Float32Array(vertices), normals: new Float32Array(normals), indices: new Uint32Array(indices) };
         }
-        
         const pointerMesh = generatePointerCylinder(0.15, 1.2, 8);
-        
-        // Create pointer VAO
         const pointerVao = gl.createVertexArray();
         gl.bindVertexArray(pointerVao);
-        
-        const pointerPosBuf = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, pointerPosBuf);
+        const ptPBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, ptPBuf);
         gl.bufferData(gl.ARRAY_BUFFER, pointerMesh.vertices, gl.STATIC_DRAW);
         gl.enableVertexAttribArray(attribs.position);
         gl.vertexAttribPointer(attribs.position, 3, gl.FLOAT, false, 0, 0);
-        
-        const pointerNormBuf = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, pointerNormBuf);
+        const ptNBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, ptNBuf);
         gl.bufferData(gl.ARRAY_BUFFER, pointerMesh.normals, gl.STATIC_DRAW);
         gl.enableVertexAttribArray(attribs.normal);
         gl.vertexAttribPointer(attribs.normal, 3, gl.FLOAT, false, 0, 0);
-        
-        const pointerColorBuf = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, pointerColorBuf);
+        const ptCBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, ptCBuf);
         gl.enableVertexAttribArray(attribs.color);
         gl.vertexAttribPointer(attribs.color, 3, gl.FLOAT, false, 0, 0);
-        
-        const pointerIdxBuf = gl.createBuffer();
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, pointerIdxBuf);
+        const ptIBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ptIBuf);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, pointerMesh.indices, gl.STATIC_DRAW);
 
-        // Multiplayer state
+        // ===== MULTIPLAYER =====
         const otherPlayers = new Map();
-        let myPlayerId = null;
-        let myPlayerColor = null;
-        let ws = null;
+        let myPlayerId = null, myPlayerColor = null, ws = null;
         const PLAYER_SPHERE_RADIUS = 1.0;
-        
-        // Connect to WebSocket server
+
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             ws = new WebSocket(`${protocol}//${window.location.host}`);
-            
-            ws.onopen = () => {
-                console.log('Connected to server');
-            };
-            
+            ws.onopen = () => console.log('Connected to server');
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                
                 switch (data.type) {
                     case 'init':
                         myPlayerId = data.id;
                         myPlayerColor = data.color;
-                        console.log('My player ID:', myPlayerId);
                         break;
-                        
                     case 'playerJoin':
-                        console.log('Player joined:', data.id);
                         otherPlayers.set(data.id, {
-                            id: data.id,
-                            color: data.color,
-                            position: data.position,
-                            forward: data.forward,
-                            pitch: data.pitch || 0
+                            id: data.id, color: data.color,
+                            position: data.position, forward: data.forward, pitch: data.pitch || 0
                         });
                         break;
-                        
-                    case 'playerMove':
-                        const otherPlayer = otherPlayers.get(data.id);
-                        if (otherPlayer) {
-                            otherPlayer.position = data.position;
-                            otherPlayer.forward = data.forward;
-                            otherPlayer.pitch = data.pitch || 0;
+                    case 'playerMove': {
+                        const op = otherPlayers.get(data.id);
+                        if (op) { op.position = data.position; op.forward = data.forward; op.pitch = data.pitch || 0; }
+                        break;
+                    }
+                    case 'playerLeave':
+                        otherPlayers.delete(data.id);
+                        break;
+                    case 'blockChange':
+                        if (gameState) {
+                            setBlock(gameState.worldBlocks, data.face, data.layer, data.block);
+                            markChunkDirty(data.face);
                         }
                         break;
-                        
-                    case 'playerLeave':
-                        console.log('Player left:', data.id);
-                        otherPlayers.delete(data.id);
+                    case 'worldState':
+                        if (gameState && data.changes) {
+                            for (const c of data.changes) {
+                                setBlock(gameState.worldBlocks, c.face, c.layer, c.block);
+                                markChunkDirty(c.face);
+                            }
+                        }
                         break;
                 }
             };
-            
-            ws.onclose = () => {
-                console.log('Disconnected from server, reconnecting...');
-                setTimeout(connectWebSocket, 2000);
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
+            ws.onclose = () => setTimeout(connectWebSocket, 2000);
+            ws.onerror = () => {};
         }
-        
-        // Send position update to server
+
         let lastPositionSent = 0;
-        function sendPositionUpdate() {
+        function sendPositionUpdate(player) {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 const now = performance.now();
-                if (now - lastPositionSent > 50) { // Send at most 20 times per second
-                    ws.send(JSON.stringify({
-                        type: 'position',
-                        position: player.position,
-                        forward: player.forward,
-                        pitch: player.pitch
-                    }));
+                if (now - lastPositionSent > 50) {
+                    ws.send(JSON.stringify({ type: 'position', position: player.position, forward: player.forward, pitch: player.pitch }));
                     lastPositionSent = now;
                 }
             }
         }
-        
-        // Connect on load
+        function sendBlockChange(face, layer, block) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'blockChange', face, layer, block }));
+            }
+        }
         connectWebSocket();
-        
-        // Create color array for player sphere
-        function createColorArray(color, vertexCount) {
-            const colors = new Float32Array(vertexCount * 3);
-            for (let i = 0; i < vertexCount; i++) {
-                colors[i * 3] = color.r;
-                colors[i * 3 + 1] = color.g;
-                colors[i * 3 + 2] = color.b;
-            }
-            return colors;
-        }
-        
-        // Matrix for positioning player spheres
-        function mat4Translate(x, y, z) {
-            return new Float32Array([
-                1, 0, 0, 0,
-                0, 1, 0, 0,
-                0, 0, 1, 0,
-                x, y, z, 1
-            ]);
-        }
-        
-        function mat4Scale(s) {
-            return new Float32Array([
-                s, 0, 0, 0,
-                0, s, 0, 0,
-                0, 0, s, 0,
-                0, 0, 0, 1
-            ]);
-        }
-        
-        function mat4Multiply(a, b) {
-            const result = new Float32Array(16);
-            for (let i = 0; i < 4; i++) {
-                for (let j = 0; j < 4; j++) {
-                    result[j * 4 + i] = 
-                        a[i] * b[j * 4] +
-                        a[i + 4] * b[j * 4 + 1] +
-                        a[i + 8] * b[j * 4 + 2] +
-                        a[i + 12] * b[j * 4 + 3];
-                }
-            }
-            return result;
-        }
-        
-        // Create rotation matrix to orient pointer from +Z to look direction
-        function mat4FromLookDirection(forward, up) {
-            // forward is where the pointer should point
-            // up is the player's up direction (away from planet center)
-            const f = normalize(forward);
-            const r = normalize(cross(f, up));
-            const u = normalize(cross(r, f));
-            
-            // Rotation matrix: columns are right, up, forward
-            // But our pointer is along +Z, so we map:
-            // +X -> right, +Y -> up, +Z -> forward
-            return new Float32Array([
-                r[0], r[1], r[2], 0,
-                u[0], u[1], u[2], 0,
-                f[0], f[1], f[2], 0,
-                0, 0, 0, 1
-            ]);
-        }
-        
-        // Apply pitch to a horizontal forward direction
-        function applyPitchToForward(forward, up, pitch) {
-            // forward is horizontal (tangent to sphere), up is radial
-            // pitch rotates forward towards up (positive pitch = looking up)
-            const cosPitch = Math.cos(-pitch); // negative because our pitch convention
-            const sinPitch = Math.sin(-pitch);
-            
-            // Rotate forward around the right vector (cross of forward and up)
-            // Result: forward * cos(pitch) + up * sin(pitch)
-            return normalize([
-                forward[0] * cosPitch + up[0] * sinPitch,
-                forward[1] * cosPitch + up[1] * sinPitch,
-                forward[2] * cosPitch + up[2] * sinPitch
-            ]);
-        }
-        
-        // Project 3D world position to 2D screen coordinates
-        function projectToScreen(worldPos, viewMatrix, projMatrix) {
-            // Transform to clip space
-            let pos = [worldPos[0], worldPos[1], worldPos[2], 1];
-            
-            // Apply view matrix
-            let viewPos = [
-                viewMatrix[0] * pos[0] + viewMatrix[4] * pos[1] + viewMatrix[8] * pos[2] + viewMatrix[12],
-                viewMatrix[1] * pos[0] + viewMatrix[5] * pos[1] + viewMatrix[9] * pos[2] + viewMatrix[13],
-                viewMatrix[2] * pos[0] + viewMatrix[6] * pos[1] + viewMatrix[10] * pos[2] + viewMatrix[14],
-                viewMatrix[3] * pos[0] + viewMatrix[7] * pos[1] + viewMatrix[11] * pos[2] + viewMatrix[15]
-            ];
-            
-            // Apply projection matrix
-            let clipPos = [
-                projMatrix[0] * viewPos[0] + projMatrix[4] * viewPos[1] + projMatrix[8] * viewPos[2] + projMatrix[12] * viewPos[3],
-                projMatrix[1] * viewPos[0] + projMatrix[5] * viewPos[1] + projMatrix[9] * viewPos[2] + projMatrix[13] * viewPos[3],
-                projMatrix[2] * viewPos[0] + projMatrix[6] * viewPos[1] + projMatrix[10] * viewPos[2] + projMatrix[14] * viewPos[3],
-                projMatrix[3] * viewPos[0] + projMatrix[7] * viewPos[1] + projMatrix[11] * viewPos[2] + projMatrix[15] * viewPos[3]
-            ];
-            
-            // Behind camera check
-            if (clipPos[3] <= 0) return null;
-            
-            // Perspective divide to NDC
-            const ndcX = clipPos[0] / clipPos[3];
-            const ndcY = clipPos[1] / clipPos[3];
-            const ndcZ = clipPos[2] / clipPos[3];
-            
-            // Check if in view frustum
-            if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1 || ndcZ < -1 || ndcZ > 1) {
-                return null;
-            }
-            
-            // Convert to screen coordinates
-            const screenX = (ndcX + 1) * 0.5 * canvas.width;
-            const screenY = (1 - ndcY) * 0.5 * canvas.height; // Flip Y
-            
-            return { x: screenX, y: screenY, depth: ndcZ };
-        }
-        
-        // Draw nametag for a player
-        function drawNametag(playerId, screenPos, color) {
-            const shortId = playerId.substring(0, 8);
-            
-            ctx.font = 'bold 14px monospace';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            
-            // Draw background
-            const textWidth = ctx.measureText(shortId).width;
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-            ctx.fillRect(screenPos.x - textWidth / 2 - 4, screenPos.y - 20, textWidth + 8, 18);
-            
-            // Draw text with player color
-            ctx.fillStyle = `rgb(${Math.floor(color.r * 255)}, ${Math.floor(color.g * 255)}, ${Math.floor(color.b * 255)})`;
-            ctx.fillText(shortId, screenPos.x, screenPos.y - 5);
-        }
 
-        // Player state
+        // ===== PLAYER STATE =====
         const player = {
-            position: [0, PLANET_RADIUS + PLAYER_HEIGHT, 0],
+            position: [0, PLANET_RADIUS + PLAYER_HEIGHT + 10, 0],
             velocity: [0, 0, 0],
-            // Store the player's forward direction on the sphere surface (tangent)
-            // This gets updated as they move to maintain continuity
-            forward: [0, 0, -1], // Initial forward direction
+            forward: [0, 0, -1],
             pitch: 0,
             grounded: false
         };
 
-        // Quaternion utilities for smooth rotation
+        let selectedBlockType = BLOCK_GRASS;
+
+        // Quaternion utilities
         function quatFromAxisAngle(axis, angle) {
-            const s = Math.sin(angle / 2);
-            return [axis[0] * s, axis[1] * s, axis[2] * s, Math.cos(angle / 2)];
+            const s = Math.sin(angle/2);
+            return [axis[0]*s, axis[1]*s, axis[2]*s, Math.cos(angle/2)];
         }
-
-        function quatMultiply(a, b) {
-            return [
-                a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1],
-                a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0],
-                a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3],
-                a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2]
-            ];
-        }
-
         function quatRotateVector(q, v) {
-            const qv = [q[0], q[1], q[2]];
-            const uv = cross(qv, v);
-            const uuv = cross(qv, uv);
-            return [
-                v[0] + 2 * (q[3] * uv[0] + uuv[0]),
-                v[1] + 2 * (q[3] * uv[1] + uuv[1]),
-                v[2] + 2 * (q[3] * uv[2] + uuv[2])
-            ];
+            const qv = [q[0],q[1],q[2]];
+            const uv = cross(qv,v);
+            const uuv = cross(qv,uv);
+            return [v[0]+2*(q[3]*uv[0]+uuv[0]), v[1]+2*(q[3]*uv[1]+uuv[1]), v[2]+2*(q[3]*uv[2]+uuv[2])];
         }
 
-        // Input state
+        // ===== INPUT =====
         const keys = {};
         let mouseLocked = false;
-        
-        // Touch control state
+
         const touchState = {
             move: { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0, touchId: null },
             look: { active: false, startX: 0, startY: 0, currentX: 0, currentY: 0, touchId: null },
-            jump: false
+            jump: false, doBreak: false, doPlace: false
         };
-        
-        // Check if touch controls should be visible (reactive check)
+
         function areTouchControlsVisible() {
-            const touchControls = document.getElementById('touchControls');
-            if (!touchControls) return false;
-            return window.getComputedStyle(touchControls).display !== 'none';
+            const tc = document.getElementById('touchControls');
+            return tc && window.getComputedStyle(tc).display !== 'none';
         }
-        
-        // Touch control elements
+
         const moveTrackpad = document.getElementById('moveTrackpad');
         const lookTrackpad = document.getElementById('lookTrackpad');
         const moveThumb = document.getElementById('moveThumb');
         const lookThumb = document.getElementById('lookThumb');
         const jumpButton = document.getElementById('jumpButton');
-        const moveInner = moveTrackpad?.querySelector('.trackpad-inner');
-        const lookInner = lookTrackpad?.querySelector('.trackpad-inner');
-        
-        // Trackpad dimensions
-        const TRACKPAD_RADIUS = 60; // Half of trackpad-inner size
-        const THUMB_MAX_OFFSET = 35; // Max distance thumb can move from center
-        
-        function updateThumbPosition(thumb, offsetX, offsetY) {
+        const breakButton = document.getElementById('breakButton');
+        const placeButton = document.getElementById('placeButton');
+        const TRACKPAD_RADIUS = 60, THUMB_MAX_OFFSET = 35;
+
+        function updateThumbPosition(thumb, ox, oy) {
             if (!thumb) return;
-            const clampedX = Math.max(-THUMB_MAX_OFFSET, Math.min(THUMB_MAX_OFFSET, offsetX));
-            const clampedY = Math.max(-THUMB_MAX_OFFSET, Math.min(THUMB_MAX_OFFSET, offsetY));
-            thumb.style.transform = `translate(calc(-50% + ${clampedX}px), calc(-50% + ${clampedY}px))`;
+            const cx = Math.max(-THUMB_MAX_OFFSET, Math.min(THUMB_MAX_OFFSET, ox));
+            const cy = Math.max(-THUMB_MAX_OFFSET, Math.min(THUMB_MAX_OFFSET, oy));
+            thumb.style.transform = `translate(calc(-50% + ${cx}px), calc(-50% + ${cy}px))`;
         }
-        
-        function resetThumbPosition(thumb) {
-            if (!thumb) return;
-            thumb.style.transform = 'translate(-50%, -50%)';
-        }
-        
-        // Move trackpad handlers (touch + mouse)
-        if (moveTrackpad) {
-            // Touch events
-            moveTrackpad.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                const touch = e.changedTouches[0];
-                touchState.move.active = true;
-                touchState.move.touchId = touch.identifier;
-                touchState.move.startX = touch.clientX;
-                touchState.move.startY = touch.clientY;
-                touchState.move.currentX = touch.clientX;
-                touchState.move.currentY = touch.clientY;
-            }, { passive: false });
-            
-            moveTrackpad.addEventListener('touchmove', (e) => {
-                e.preventDefault();
-                for (const touch of e.changedTouches) {
-                    if (touch.identifier === touchState.move.touchId) {
-                        touchState.move.currentX = touch.clientX;
-                        touchState.move.currentY = touch.clientY;
-                        const offsetX = touchState.move.currentX - touchState.move.startX;
-                        const offsetY = touchState.move.currentY - touchState.move.startY;
-                        updateThumbPosition(moveThumb, offsetX, offsetY);
-                    }
-                }
-            }, { passive: false });
-            
-            moveTrackpad.addEventListener('touchend', (e) => {
-                for (const touch of e.changedTouches) {
-                    if (touch.identifier === touchState.move.touchId) {
-                        touchState.move.active = false;
-                        touchState.move.touchId = null;
-                        resetThumbPosition(moveThumb);
-                    }
-                }
-            });
-            
-            moveTrackpad.addEventListener('touchcancel', (e) => {
-                touchState.move.active = false;
-                touchState.move.touchId = null;
-                resetThumbPosition(moveThumb);
-            });
-            
-            // Mouse events for move trackpad
-            moveTrackpad.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                touchState.move.active = true;
-                touchState.move.touchId = 'mouse';
-                touchState.move.startX = e.clientX;
-                touchState.move.startY = e.clientY;
-                touchState.move.currentX = e.clientX;
-                touchState.move.currentY = e.clientY;
-            });
-        }
-        
-        // Look trackpad handlers (touch + mouse)
-        if (lookTrackpad) {
-            // Touch events
-            lookTrackpad.addEventListener('touchstart', (e) => {
-                // Check if it's not the jump button
-                if (e.target === jumpButton || jumpButton?.contains(e.target)) return;
-                
-                e.preventDefault();
-                const touch = e.changedTouches[0];
-                touchState.look.active = true;
-                touchState.look.touchId = touch.identifier;
-                touchState.look.startX = touch.clientX;
-                touchState.look.startY = touch.clientY;
-                touchState.look.currentX = touch.clientX;
-                touchState.look.currentY = touch.clientY;
-            }, { passive: false });
-            
-            lookTrackpad.addEventListener('touchmove', (e) => {
-                e.preventDefault();
-                for (const touch of e.changedTouches) {
-                    if (touch.identifier === touchState.look.touchId) {
-                        const deltaX = touch.clientX - touchState.look.currentX;
-                        const deltaY = touch.clientY - touchState.look.currentY;
-                        touchState.look.currentX = touch.clientX;
-                        touchState.look.currentY = touch.clientY;
-                        
-                        // Apply look rotation (same as mouse)
-                        applyLookDelta(-deltaX * 0.004, deltaY * 0.004);
-                        
-                        const offsetX = touchState.look.currentX - touchState.look.startX;
-                        const offsetY = touchState.look.currentY - touchState.look.startY;
-                        updateThumbPosition(lookThumb, offsetX * 0.3, offsetY * 0.3);
-                    }
-                }
-            }, { passive: false });
-            
-            lookTrackpad.addEventListener('touchend', (e) => {
-                for (const touch of e.changedTouches) {
-                    if (touch.identifier === touchState.look.touchId) {
-                        touchState.look.active = false;
-                        touchState.look.touchId = null;
-                        resetThumbPosition(lookThumb);
-                    }
-                }
-            });
-            
-            lookTrackpad.addEventListener('touchcancel', (e) => {
-                touchState.look.active = false;
-                touchState.look.touchId = null;
-                resetThumbPosition(lookThumb);
-            });
-            
-            // Mouse events for look trackpad
-            lookTrackpad.addEventListener('mousedown', (e) => {
-                if (e.target === jumpButton || jumpButton?.contains(e.target)) return;
-                e.preventDefault();
-                touchState.look.active = true;
-                touchState.look.touchId = 'mouse';
-                touchState.look.startX = e.clientX;
-                touchState.look.startY = e.clientY;
-                touchState.look.currentX = e.clientX;
-                touchState.look.currentY = e.clientY;
-            });
-        }
-        
-        // Global mouse move and up handlers for trackpads
-        document.addEventListener('mousemove', (e) => {
-            // Handle move trackpad mouse drag
-            if (touchState.move.active && touchState.move.touchId === 'mouse') {
-                touchState.move.currentX = e.clientX;
-                touchState.move.currentY = e.clientY;
-                const offsetX = touchState.move.currentX - touchState.move.startX;
-                const offsetY = touchState.move.currentY - touchState.move.startY;
-                updateThumbPosition(moveThumb, offsetX, offsetY);
-            }
-            
-            // Handle look trackpad mouse drag
-            if (touchState.look.active && touchState.look.touchId === 'mouse') {
-                const deltaX = e.clientX - touchState.look.currentX;
-                const deltaY = e.clientY - touchState.look.currentY;
-                touchState.look.currentX = e.clientX;
-                touchState.look.currentY = e.clientY;
-                
-                // Apply look rotation
-                applyLookDelta(-deltaX * 0.004, deltaY * 0.004);
-                
-                const offsetX = touchState.look.currentX - touchState.look.startX;
-                const offsetY = touchState.look.currentY - touchState.look.startY;
-                updateThumbPosition(lookThumb, offsetX * 0.3, offsetY * 0.3);
-            }
-        });
-        
-        document.addEventListener('mouseup', (e) => {
-            if (touchState.move.touchId === 'mouse') {
-                touchState.move.active = false;
-                touchState.move.touchId = null;
-                resetThumbPosition(moveThumb);
-            }
-            if (touchState.look.touchId === 'mouse') {
-                touchState.look.active = false;
-                touchState.look.touchId = null;
-                resetThumbPosition(lookThumb);
-            }
-        });
-        
-        // Jump button handlers (touch + mouse)
-        if (jumpButton) {
-            jumpButton.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                touchState.jump = true;
-            }, { passive: false });
-            
-            jumpButton.addEventListener('touchend', (e) => {
-                touchState.jump = false;
-            });
-            
-            jumpButton.addEventListener('touchcancel', (e) => {
-                touchState.jump = false;
-            });
-            
-            // Mouse events for jump button
-            jumpButton.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                touchState.jump = true;
-            });
-            
-            jumpButton.addEventListener('mouseup', (e) => {
-                touchState.jump = false;
-            });
-            
-            jumpButton.addEventListener('mouseleave', (e) => {
-                touchState.jump = false;
-            });
-        }
-        
-        // Function to apply look rotation (shared between mouse and touch)
+        function resetThumbPosition(thumb) { if (thumb) thumb.style.transform = 'translate(-50%, -50%)'; }
+
         function applyLookDelta(yawDelta, pitchDelta) {
-            // Rotate forward vector around up axis for yaw
             const up = normalize(player.position);
-            const cosYaw = Math.cos(yawDelta);
-            const sinYaw = Math.sin(yawDelta);
-            
-            // Rodrigues rotation formula around up axis
+            const cosYaw = Math.cos(yawDelta), sinYaw = Math.sin(yawDelta);
             let forward = player.forward;
-            const forwardDotUp = dot(forward, up);
-            forward = subtract(forward, scale(up, forwardDotUp)); // ensure tangent
+            const fdu = dot(forward, up);
+            forward = subtract(forward, scale(up, fdu));
             if (length(forward) > 0.001) {
                 forward = normalize(forward);
-                const rotated = add(
-                    scale(forward, cosYaw),
-                    scale(cross(up, forward), sinYaw)
-                );
-                player.forward = normalize(rotated);
+                player.forward = normalize(add(scale(forward, cosYaw), scale(cross(up, forward), sinYaw)));
             }
-            
-            // Update pitch
             player.pitch += pitchDelta;
-            player.pitch = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, player.pitch));
+            player.pitch = Math.max(-Math.PI/2+0.1, Math.min(Math.PI/2-0.1, player.pitch));
         }
-        
-        // Get movement input from keyboard or touch
-        function getMovementInput() {
-            let moveX = 0; // left/right
-            let moveY = 0; // forward/back
-            
-            // Keyboard input (disabled when touch controls are visible)
-            if (!areTouchControlsVisible()) {
-                if (keys['KeyW']) moveY += 1;
-                if (keys['KeyS']) moveY -= 1;
-                if (keys['KeyD']) moveX += 1;
-                if (keys['KeyA']) moveX -= 1;
+
+        // Touch trackpad handlers
+        if (moveTrackpad) {
+            moveTrackpad.addEventListener('touchstart', e => {
+                e.preventDefault();
+                const t = e.changedTouches[0];
+                touchState.move.active = true; touchState.move.touchId = t.identifier;
+                touchState.move.startX = t.clientX; touchState.move.startY = t.clientY;
+                touchState.move.currentX = t.clientX; touchState.move.currentY = t.clientY;
+            }, {passive:false});
+            moveTrackpad.addEventListener('touchmove', e => {
+                e.preventDefault();
+                for (const t of e.changedTouches) if (t.identifier === touchState.move.touchId) {
+                    touchState.move.currentX = t.clientX; touchState.move.currentY = t.clientY;
+                    updateThumbPosition(moveThumb, touchState.move.currentX-touchState.move.startX, touchState.move.currentY-touchState.move.startY);
+                }
+            }, {passive:false});
+            moveTrackpad.addEventListener('touchend', e => {
+                for (const t of e.changedTouches) if (t.identifier === touchState.move.touchId) {
+                    touchState.move.active = false; touchState.move.touchId = null; resetThumbPosition(moveThumb);
+                }
+            });
+            moveTrackpad.addEventListener('touchcancel', () => { touchState.move.active = false; touchState.move.touchId = null; resetThumbPosition(moveThumb); });
+            moveTrackpad.addEventListener('mousedown', e => {
+                e.preventDefault(); touchState.move.active = true; touchState.move.touchId = 'mouse';
+                touchState.move.startX = e.clientX; touchState.move.startY = e.clientY;
+                touchState.move.currentX = e.clientX; touchState.move.currentY = e.clientY;
+            });
+        }
+        if (lookTrackpad) {
+            lookTrackpad.addEventListener('touchstart', e => {
+                if (e.target === jumpButton || jumpButton?.contains(e.target)) return;
+                if (e.target === breakButton || breakButton?.contains(e.target)) return;
+                if (e.target === placeButton || placeButton?.contains(e.target)) return;
+                e.preventDefault();
+                const t = e.changedTouches[0];
+                touchState.look.active = true; touchState.look.touchId = t.identifier;
+                touchState.look.startX = t.clientX; touchState.look.startY = t.clientY;
+                touchState.look.currentX = t.clientX; touchState.look.currentY = t.clientY;
+            }, {passive:false});
+            lookTrackpad.addEventListener('touchmove', e => {
+                e.preventDefault();
+                for (const t of e.changedTouches) if (t.identifier === touchState.look.touchId) {
+                    const dx = t.clientX - touchState.look.currentX;
+                    const dy = t.clientY - touchState.look.currentY;
+                    touchState.look.currentX = t.clientX; touchState.look.currentY = t.clientY;
+                    applyLookDelta(-dx*0.004, dy*0.004);
+                    updateThumbPosition(lookThumb, (touchState.look.currentX-touchState.look.startX)*0.3, (touchState.look.currentY-touchState.look.startY)*0.3);
+                }
+            }, {passive:false});
+            lookTrackpad.addEventListener('touchend', e => {
+                for (const t of e.changedTouches) if (t.identifier === touchState.look.touchId) {
+                    touchState.look.active = false; touchState.look.touchId = null; resetThumbPosition(lookThumb);
+                }
+            });
+            lookTrackpad.addEventListener('touchcancel', () => { touchState.look.active = false; touchState.look.touchId = null; resetThumbPosition(lookThumb); });
+            lookTrackpad.addEventListener('mousedown', e => {
+                if (e.target === jumpButton || jumpButton?.contains(e.target)) return;
+                e.preventDefault(); touchState.look.active = true; touchState.look.touchId = 'mouse';
+                touchState.look.startX = e.clientX; touchState.look.startY = e.clientY;
+                touchState.look.currentX = e.clientX; touchState.look.currentY = e.clientY;
+            });
+        }
+        document.addEventListener('mousemove', e => {
+            if (touchState.move.active && touchState.move.touchId === 'mouse') {
+                touchState.move.currentX = e.clientX; touchState.move.currentY = e.clientY;
+                updateThumbPosition(moveThumb, touchState.move.currentX-touchState.move.startX, touchState.move.currentY-touchState.move.startY);
             }
-            
-            // Touch input
+            if (touchState.look.active && touchState.look.touchId === 'mouse') {
+                const dx = e.clientX - touchState.look.currentX, dy = e.clientY - touchState.look.currentY;
+                touchState.look.currentX = e.clientX; touchState.look.currentY = e.clientY;
+                applyLookDelta(-dx*0.004, dy*0.004);
+                updateThumbPosition(lookThumb, (touchState.look.currentX-touchState.look.startX)*0.3, (touchState.look.currentY-touchState.look.startY)*0.3);
+            }
+        });
+        document.addEventListener('mouseup', () => {
+            if (touchState.move.touchId === 'mouse') { touchState.move.active = false; touchState.move.touchId = null; resetThumbPosition(moveThumb); }
+            if (touchState.look.touchId === 'mouse') { touchState.look.active = false; touchState.look.touchId = null; resetThumbPosition(lookThumb); }
+        });
+
+        // Jump/break/place buttons
+        function setupBtn(btn, prop) {
+            if (!btn) return;
+            btn.addEventListener('touchstart', e => { e.preventDefault(); e.stopPropagation(); touchState[prop] = true; }, {passive:false});
+            btn.addEventListener('touchend', () => touchState[prop] = false);
+            btn.addEventListener('touchcancel', () => touchState[prop] = false);
+            btn.addEventListener('mousedown', e => { e.preventDefault(); e.stopPropagation(); touchState[prop] = true; });
+            btn.addEventListener('mouseup', () => touchState[prop] = false);
+            btn.addEventListener('mouseleave', () => touchState[prop] = false);
+        }
+        setupBtn(jumpButton, 'jump');
+        setupBtn(breakButton, 'doBreak');
+        setupBtn(placeButton, 'doPlace');
+
+        function getMovementInput() {
+            let mx = 0, my = 0;
+            if (!areTouchControlsVisible()) {
+                if (keys['KeyW']) my += 1; if (keys['KeyS']) my -= 1;
+                if (keys['KeyD']) mx += 1; if (keys['KeyA']) mx -= 1;
+            }
             if (touchState.move.active) {
                 const dx = touchState.move.currentX - touchState.move.startX;
                 const dy = touchState.move.currentY - touchState.move.startY;
-                // Normalize to -1 to 1 range, with deadzone
-                const deadzone = 10;
-                const maxDistance = 50;
-                
-                if (Math.abs(dx) > deadzone) {
-                    moveX += Math.max(-1, Math.min(1, (dx - Math.sign(dx) * deadzone) / maxDistance));
-                }
-                if (Math.abs(dy) > deadzone) {
-                    moveY -= Math.max(-1, Math.min(1, (dy - Math.sign(dy) * deadzone) / maxDistance));
-                }
+                const dz = 10, maxD = 50;
+                if (Math.abs(dx) > dz) mx += Math.max(-1, Math.min(1, (dx-Math.sign(dx)*dz)/maxD));
+                if (Math.abs(dy) > dz) my -= Math.max(-1, Math.min(1, (dy-Math.sign(dy)*dz)/maxD));
             }
-            
-            return { x: Math.max(-1, Math.min(1, moveX)), y: Math.max(-1, Math.min(1, moveY)) };
+            return { x: Math.max(-1, Math.min(1, mx)), y: Math.max(-1, Math.min(1, my)) };
         }
-        
-        // Check if jump is requested
         function isJumpPressed() {
-            // Keyboard jump disabled when touch controls are visible
-            const keyboardJump = !areTouchControlsVisible() && keys['Space'];
-            return keyboardJump || touchState.jump;
+            return (!areTouchControlsVisible() && keys['Space']) || touchState.jump;
         }
 
         document.addEventListener('keydown', e => {
             keys[e.code] = true;
             if (e.code === 'Space') e.preventDefault();
+            // Block selection 1-7
+            const num = parseInt(e.key);
+            if (num >= 1 && num <= 7) {
+                selectedBlockType = num;
+                updateHotbar();
+            }
         });
         document.addEventListener('keyup', e => keys[e.code] = false);
 
@@ -1493,173 +1294,370 @@
 
         const instructions = document.getElementById('instructions');
         canvas.addEventListener('click', () => {
-            // Don't request pointer lock when touch controls are visible
-            if (!areTouchControlsVisible()) {
-                canvas.requestPointerLock();
-            }
+            if (!areTouchControlsVisible()) canvas.requestPointerLock();
         });
-
         document.addEventListener('pointerlockchange', () => {
             mouseLocked = document.pointerLockElement === canvas;
             instructions.classList.toggle('hidden', mouseLocked);
         });
+        canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-        // Physics update
-        function updatePhysics(dt) {
-            // Get player's "up" direction (away from planet center)
-            const up = normalize(player.position);
-            
-            // Re-orthogonalize forward to be tangent to sphere
-            // This maintains a smooth, continuous reference frame
-            let forward = player.forward;
-            // Remove any component of forward that points along up
-            const forwardDotUp = dot(forward, up);
-            forward = subtract(forward, scale(up, forwardDotUp));
-            
-            // If forward became degenerate, pick a new one
-            if (length(forward) < 0.001) {
-                // Find any vector not parallel to up
-                if (Math.abs(up[1]) < 0.9) {
-                    forward = [0, 1, 0];
-                } else {
-                    forward = [1, 0, 0];
+        // Block break/place via mouse
+        let lastBreakTime = 0, lastPlaceTime = 0;
+        canvas.addEventListener('mousedown', e => {
+            if (!mouseLocked || !gameState) return;
+            const now = performance.now();
+            if (e.button === 0 && now - lastBreakTime > 200) {
+                lastBreakTime = now;
+                doBreakBlock();
+            } else if (e.button === 2 && now - lastPlaceTime > 200) {
+                lastPlaceTime = now;
+                doPlaceBlock();
+            }
+        });
+
+        // ===== HOTBAR UI =====
+        const hotbarEl = document.getElementById('hotbar');
+        function buildHotbar() {
+            hotbarEl.innerHTML = '';
+            for (let i = 1; i <= 7; i++) {
+                const slot = document.createElement('div');
+                slot.className = 'hotbar-slot' + (i === selectedBlockType ? ' selected' : '');
+                const preview = document.createElement('div');
+                preview.className = 'block-preview';
+                const c = BLOCK_COLORS[i];
+                preview.style.background = `rgb(${Math.floor(c[0]*255)},${Math.floor(c[1]*255)},${Math.floor(c[2]*255)})`;
+                const hint = document.createElement('span');
+                hint.className = 'key-hint';
+                hint.textContent = i;
+                slot.appendChild(hint);
+                slot.appendChild(preview);
+                hotbarEl.appendChild(slot);
+            }
+        }
+        function updateHotbar() {
+            const slots = hotbarEl.querySelectorAll('.hotbar-slot');
+            slots.forEach((s, i) => s.classList.toggle('selected', i + 1 === selectedBlockType));
+            document.getElementById('blockName').textContent = BLOCK_NAMES[selectedBlockType];
+        }
+        buildHotbar();
+
+        // ===== GAME STATE (set after async init) =====
+        let gameState = null;
+
+        function markChunkDirty(faceIdx) {
+            if (!gameState) return;
+            const chunkIdx = gameState.topo.faceToChunk[faceIdx];
+            gameState.chunks[chunkIdx].dirty = true;
+            // Also dirty neighbor chunks if face is on boundary
+            const topo = gameState.topo;
+            for (let e = 0; e < 3; e++) {
+                const nf = topo.faceNeighbors[faceIdx * 3 + e];
+                if (nf >= 0) {
+                    const nc = topo.faceToChunk[nf];
+                    if (nc !== chunkIdx) gameState.chunks[nc].dirty = true;
                 }
+            }
+        }
+
+        function getLookDirection() {
+            const up = normalize(player.position);
+            let forward = player.forward;
+            forward = subtract(forward, scale(up, dot(forward, up)));
+            forward = normalize(forward);
+            const cosPitch = Math.cos(-player.pitch), sinPitch = Math.sin(-player.pitch);
+            return normalize([
+                forward[0]*cosPitch + up[0]*sinPitch,
+                forward[1]*cosPitch + up[1]*sinPitch,
+                forward[2]*cosPitch + up[2]*sinPitch
+            ]);
+        }
+
+        function doBreakBlock() {
+            if (!gameState) return;
+            const dir = getLookDirection();
+            const hit = raycastBlock(player.position, dir, 20, gameState.topo, gameState.worldBlocks, gameState.findFace);
+            if (hit) {
+                setBlock(gameState.worldBlocks, hit.hitFace, hit.hitLayer, BLOCK_AIR);
+                markChunkDirty(hit.hitFace);
+                sendBlockChange(hit.hitFace, hit.hitLayer, BLOCK_AIR);
+            }
+        }
+        function doPlaceBlock() {
+            if (!gameState) return;
+            const dir = getLookDirection();
+            const hit = raycastBlock(player.position, dir, 20, gameState.topo, gameState.worldBlocks, gameState.findFace);
+            if (hit && hit.placeFace >= 0 && hit.placeLayer >= 0) {
+                // Don't place inside player
+                const placeR = layerOuterRadius(hit.placeLayer);
+                const playerR = length(player.position);
+                if (Math.abs(placeR - playerR) < PLAYER_HEIGHT * 1.5) {
+                    const pDir = normalize(player.position);
+                    const pFace = gameState.findFace(pDir);
+                    if (pFace === hit.placeFace) return;
+                }
+                setBlock(gameState.worldBlocks, hit.placeFace, hit.placeLayer, selectedBlockType);
+                markChunkDirty(hit.placeFace);
+                sendBlockChange(hit.placeFace, hit.placeLayer, selectedBlockType);
+            }
+        }
+
+        // ===== PHYSICS =====
+        function getTerrainHeight(pos, topo, worldBlocks, findFace) {
+            const dir = normalize(pos);
+            const face = findFace(dir);
+            for (let l = NUM_LAYERS - 1; l >= 0; l--) {
+                const b = getBlock(worldBlocks, face, l);
+                if (b !== BLOCK_AIR && b !== BLOCK_WATER) return layerOuterRadius(l);
+            }
+            return INNER_RADIUS;
+        }
+
+        function updatePhysics(dt) {
+            if (!gameState) return;
+            const up = normalize(player.position);
+            let forward = player.forward;
+            const fdu = dot(forward, up);
+            forward = subtract(forward, scale(up, fdu));
+            if (length(forward) < 0.001) {
+                forward = Math.abs(up[1]) < 0.9 ? [0,1,0] : [1,0,0];
                 forward = subtract(forward, scale(up, dot(forward, up)));
             }
             forward = normalize(forward);
             player.forward = forward;
-            
-            // Calculate right vector (forward is now the look direction directly)
+
             const right = normalize(cross(forward, up));
-            
-            // Movement input - use getMovementInput for keyboard and touch support
             const moveInput = getMovementInput();
-            let moveDir = [0, 0, 0];
-            
-            // Forward/back (moveInput.y)
-            if (moveInput.y !== 0) {
-                moveDir = add(moveDir, scale(forward, moveInput.y));
-            }
-            // Left/right (moveInput.x)
-            if (moveInput.x !== 0) {
-                moveDir = add(moveDir, scale(right, moveInput.x));
-            }
-            
+            let moveDir = [0,0,0];
+            if (moveInput.y !== 0) moveDir = add(moveDir, scale(forward, moveInput.y));
+            if (moveInput.x !== 0) moveDir = add(moveDir, scale(right, moveInput.x));
+
             if (length(moveDir) > 0) {
                 moveDir = normalize(moveDir);
-                const moveVel = scale(moveDir, MOVE_SPEED);
-                // Project current velocity onto up, keep that, replace horizontal
                 const verticalVel = scale(up, dot(player.velocity, up));
-                player.velocity = add(verticalVel, moveVel);
+                player.velocity = add(verticalVel, scale(moveDir, MOVE_SPEED));
             } else {
-                // Dampen horizontal velocity when not moving
                 const verticalVel = scale(up, dot(player.velocity, up));
                 const horizontalVel = subtract(player.velocity, verticalVel);
                 player.velocity = add(verticalVel, scale(horizontalVel, 0.9));
             }
-            
-            // Jumping - use isJumpPressed for keyboard and touch support
+
             if (isJumpPressed() && player.grounded) {
                 player.velocity = add(player.velocity, scale(up, JUMP_VELOCITY));
                 player.grounded = false;
             }
-            
-            // Gravity (towards planet center)
-            const gravityDir = scale(up, -1);
-            player.velocity = add(player.velocity, scale(gravityDir, GRAVITY * dt));
-            
-            // Store old up for rotating forward vector
+
+            player.velocity = add(player.velocity, scale(up, -GRAVITY * dt));
+
             const oldUp = up;
-            
-            // Update position
             player.position = add(player.position, scale(player.velocity, dt));
-            
+
             // Ground collision
             const newDist = length(player.position);
             const newUp = normalize(player.position);
-            
-            if (newDist < PLANET_RADIUS + PLAYER_HEIGHT) {
-                player.position = scale(newUp, PLANET_RADIUS + PLAYER_HEIGHT);
-                // Remove velocity towards planet
-                const velTowardsPlanet = dot(player.velocity, scale(newUp, -1));
-                if (velTowardsPlanet > 0) {
-                    player.velocity = add(player.velocity, scale(newUp, velTowardsPlanet));
-                }
+            const groundHeight = getTerrainHeight(player.position, gameState.topo, gameState.worldBlocks, gameState.findFace);
+
+            if (newDist < groundHeight + PLAYER_HEIGHT) {
+                player.position = scale(newUp, groundHeight + PLAYER_HEIGHT);
+                const velDown = dot(player.velocity, scale(newUp, -1));
+                if (velDown > 0) player.velocity = add(player.velocity, scale(newUp, velDown));
                 player.grounded = true;
             } else {
                 player.grounded = false;
             }
-            
-            // Rotate forward vector to stay tangent as player moves on sphere
-            // Calculate rotation from oldUp to newUp
-            const rotationAxis = cross(oldUp, newUp);
-            const rotationAxisLen = length(rotationAxis);
-            if (rotationAxisLen > 0.0001) {
-                const angle = Math.asin(Math.min(1, rotationAxisLen));
-                const axis = scale(rotationAxis, 1 / rotationAxisLen);
-                const q = quatFromAxisAngle(axis, angle);
-                player.forward = quatRotateVector(q, player.forward);
-                // Re-normalize to prevent drift
-                player.forward = normalize(player.forward);
+
+            // Ceiling collision
+            const headDist = length(player.position) + PLAYER_HEIGHT * 0.5;
+            const headLayer = Math.floor((headDist - INNER_RADIUS) / BLOCK_HEIGHT);
+            if (headLayer >= 0 && headLayer < NUM_LAYERS) {
+                const headFace = gameState.findFace(newUp);
+                if (getBlock(gameState.worldBlocks, headFace, headLayer) !== BLOCK_AIR &&
+                    getBlock(gameState.worldBlocks, headFace, headLayer) !== BLOCK_WATER) {
+                    const ceilH = layerInnerRadius(headLayer) - PLAYER_HEIGHT * 0.5;
+                    player.position = scale(newUp, ceilH);
+                    const upVel = dot(player.velocity, newUp);
+                    if (upVel > 0) player.velocity = subtract(player.velocity, scale(newUp, upVel));
+                }
             }
+
+            // Rotate forward to stay tangent
+            const rotAxis = cross(oldUp, newUp);
+            const rotLen = length(rotAxis);
+            if (rotLen > 0.0001) {
+                const angle = Math.asin(Math.min(1, rotLen));
+                const axis = scale(rotAxis, 1/rotLen);
+                const q = quatFromAxisAngle(axis, angle);
+                player.forward = normalize(quatRotateVector(q, player.forward));
+            }
+
+            // Touch break/place
+            if (touchState.doBreak) { touchState.doBreak = false; doBreakBlock(); }
+            if (touchState.doPlace) { touchState.doPlace = false; doPlaceBlock(); }
         }
 
-        // Get camera matrices
+        // ===== CAMERA =====
         function getCameraMatrix() {
             const up = normalize(player.position);
-            
-            // Use the player's stored forward direction (already tangent to sphere)
-            // Forward already includes yaw rotation from mouse input
             let forward = player.forward;
-            // Ensure it's orthogonal to up
             forward = subtract(forward, scale(up, dot(forward, up)));
             forward = normalize(forward);
-            
-            // Calculate right
             const right = normalize(cross(forward, up));
-            
-            // Apply pitch only (yaw is already baked into forward)
-            const cosPitch = Math.cos(-player.pitch);
-            const sinPitch = Math.sin(-player.pitch);
-            let lookForward = normalize([
-                forward[0] * cosPitch + up[0] * sinPitch,
-                forward[1] * cosPitch + up[1] * sinPitch,
-                forward[2] * cosPitch + up[2] * sinPitch
-            ]);
-            
-            const camUp = normalize(cross(right, lookForward));
-            const target = add(player.position, lookForward);
-            
-            return mat4LookAt(player.position, target, camUp);
+            const cp = Math.cos(-player.pitch), sp = Math.sin(-player.pitch);
+            const lookFwd = normalize([forward[0]*cp+up[0]*sp, forward[1]*cp+up[1]*sp, forward[2]*cp+up[2]*sp]);
+            const camUp = normalize(cross(right, lookFwd));
+            return mat4LookAt(player.position, add(player.position, lookFwd), camUp);
         }
 
-        // UI elements
+        // ===== MULTIPLAYER RENDERING HELPERS =====
+        function createColorArray(color, count) {
+            const c = new Float32Array(count * 3);
+            for (let i = 0; i < count; i++) { c[i*3] = color.r; c[i*3+1] = color.g; c[i*3+2] = color.b; }
+            return c;
+        }
+        function mat4FromLookDirection(fwd, up) {
+            const f = normalize(fwd), r = normalize(cross(f, up)), u = normalize(cross(r, f));
+            return new Float32Array([r[0],r[1],r[2],0, u[0],u[1],u[2],0, f[0],f[1],f[2],0, 0,0,0,1]);
+        }
+        function applyPitchToForward(fwd, up, pitch) {
+            const cp = Math.cos(-pitch), sp = Math.sin(-pitch);
+            return normalize([fwd[0]*cp+up[0]*sp, fwd[1]*cp+up[1]*sp, fwd[2]*cp+up[2]*sp]);
+        }
+        function projectToScreen(wp, vm, pm) {
+            let vp = [vm[0]*wp[0]+vm[4]*wp[1]+vm[8]*wp[2]+vm[12], vm[1]*wp[0]+vm[5]*wp[1]+vm[9]*wp[2]+vm[13], vm[2]*wp[0]+vm[6]*wp[1]+vm[10]*wp[2]+vm[14], vm[3]*wp[0]+vm[7]*wp[1]+vm[11]*wp[2]+vm[15]];
+            let cp = [pm[0]*vp[0]+pm[4]*vp[1]+pm[8]*vp[2]+pm[12]*vp[3], pm[1]*vp[0]+pm[5]*vp[1]+pm[9]*vp[2]+pm[13]*vp[3], pm[2]*vp[0]+pm[6]*vp[1]+pm[10]*vp[2]+pm[14]*vp[3], pm[3]*vp[0]+pm[7]*vp[1]+pm[11]*vp[2]+pm[14+1]*vp[3]];
+            if (cp[3] <= 0) return null;
+            const nx = cp[0]/cp[3], ny = cp[1]/cp[3], nz = cp[2]/cp[3];
+            if (nx<-1||nx>1||ny<-1||ny>1||nz<-1||nz>1) return null;
+            return { x: (nx+1)*0.5*canvas.width, y: (1-ny)*0.5*canvas.height, depth: nz };
+        }
+        function drawNametag(id, sp, color) {
+            const sid = id.substring(0, 8);
+            ctx.font = 'bold 14px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+            const tw = ctx.measureText(sid).width;
+            ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(sp.x-tw/2-4, sp.y-20, tw+8, 18);
+            ctx.fillStyle = `rgb(${Math.floor(color.r*255)},${Math.floor(color.g*255)},${Math.floor(color.b*255)})`;
+            ctx.fillText(sid, sp.x, sp.y-5);
+        }
+
+        // ===== UI =====
         const posEl = document.getElementById('pos');
         const latEl = document.getElementById('lat');
         const lonEl = document.getElementById('lon');
         const groundedEl = document.getElementById('grounded');
 
-        // Main render loop
+        // ===== ASYNC INITIALIZATION =====
+        async function initGame() {
+            const loadingEl = document.getElementById('loading');
+            const fillEl = document.getElementById('loadingFill');
+            const textEl = document.getElementById('loadingText');
+
+            textEl.textContent = 'Building topology...';
+            await new Promise(r => setTimeout(r, 10));
+
+            const topo = buildIcosphereTopology(SUBDIVISIONS);
+            console.log(`Topology: ${topo.faceCount} faces, ${topo.vertexCount} vertices, ${topo.chunkCount} chunks`);
+
+            fillEl.style.width = '15%';
+            textEl.textContent = 'Building face lookup...';
+            await new Promise(r => setTimeout(r, 10));
+
+            const findFace = buildFaceLookup(topo);
+
+            fillEl.style.width = '25%';
+            textEl.textContent = 'Generating terrain...';
+            await new Promise(r => setTimeout(r, 10));
+
+            const worldBlocks = new Uint8Array(topo.faceCount * NUM_LAYERS);
+            generateTerrain(topo, worldBlocks);
+
+            fillEl.style.width = '35%';
+            textEl.textContent = 'Building chunks...';
+            await new Promise(r => setTimeout(r, 10));
+
+            // Create chunks
+            const chunks = new Array(topo.chunkCount);
+            for (let c = 0; c < topo.chunkCount; c++) {
+                chunks[c] = {
+                    id: c,
+                    faceIndices: topo.chunkFaces[c],
+                    center: [topo.chunkCenters[c*3], topo.chunkCenters[c*3+1], topo.chunkCenters[c*3+2]],
+                    dirty: true, vao: null, posBuf: null, normBuf: null, colorBuf: null, idxBuf: null, indexCount: 0
+                };
+            }
+
+            // Build all chunk meshes progressively
+            const batchSize = 20;
+            for (let i = 0; i < chunks.length; i += batchSize) {
+                for (let j = i; j < Math.min(i + batchSize, chunks.length); j++) {
+                    buildChunkMesh(chunks[j], topo, worldBlocks);
+                }
+                const pct = 35 + (i / chunks.length) * 60;
+                fillEl.style.width = pct + '%';
+                textEl.textContent = `Building chunks... ${Math.min(i+batchSize, chunks.length)}/${chunks.length}`;
+                await new Promise(r => setTimeout(r, 0));
+            }
+
+            // Spawn player above terrain
+            const spawnDir = normalize([0, 1, 0]);
+            const spawnFace = findFace(spawnDir);
+            let spawnHeight = PLANET_RADIUS;
+            for (let l = NUM_LAYERS - 1; l >= 0; l--) {
+                if (getBlock(worldBlocks, spawnFace, l) !== BLOCK_AIR && getBlock(worldBlocks, spawnFace, l) !== BLOCK_WATER) {
+                    spawnHeight = layerOuterRadius(l);
+                    break;
+                }
+            }
+            player.position = scale(spawnDir, spawnHeight + PLAYER_HEIGHT);
+
+            initHighlight();
+
+            fillEl.style.width = '100%';
+            textEl.textContent = 'Ready!';
+            await new Promise(r => setTimeout(r, 300));
+            loadingEl.style.display = 'none';
+
+            gameState = { topo, worldBlocks, findFace, chunks };
+
+            // Start render loop
+            requestAnimationFrame(render);
+        }
+
+        // ===== RENDER LOOP =====
         let lastTime = performance.now();
-        
+
+        function getVisibleChunks() {
+            const dir = normalize(player.position);
+            const visible = [];
+            for (let i = 0; i < gameState.chunks.length; i++) {
+                const c = gameState.chunks[i].center;
+                const d = dir[0]*c[0] + dir[1]*c[1] + dir[2]*c[2];
+                if (d > VIEW_ANGLE_COS) visible.push(gameState.chunks[i]);
+            }
+            return visible;
+        }
+
         function render(time) {
             const dt = Math.min((time - lastTime) / 1000, 0.1);
             lastTime = time;
 
-            // Update physics
             updatePhysics(dt);
-            
-            // Send position to server
-            sendPositionUpdate();
+            sendPositionUpdate(player);
+
+            // Rebuild dirty chunks
+            let rebuilds = 0;
+            for (const chunk of gameState.chunks) {
+                if (chunk.dirty && rebuilds < 4) {
+                    buildChunkMesh(chunk, gameState.topo, gameState.worldBlocks);
+                    rebuilds++;
+                }
+            }
 
             // Update UI
             const p = player.position;
             posEl.textContent = `${p[0].toFixed(1)}, ${p[1].toFixed(1)}, ${p[2].toFixed(1)}`;
-            
-            const lat = Math.asin(normalize(p)[1]) * 180 / Math.PI;
-            const lon = Math.atan2(normalize(p)[0], normalize(p)[2]) * 180 / Math.PI;
-            latEl.textContent = lat.toFixed(1);
-            lonEl.textContent = lon.toFixed(1);
+            const np = normalize(p);
+            latEl.textContent = (Math.asin(np[1]) * 180 / Math.PI).toFixed(1);
+            lonEl.textContent = (Math.atan2(np[0], np[2]) * 180 / Math.PI).toFixed(1);
             groundedEl.textContent = player.grounded ? 'Yes' : 'No';
 
             // Clear
@@ -1667,110 +1665,84 @@
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
             gl.enable(gl.DEPTH_TEST);
             gl.enable(gl.CULL_FACE);
-            
-            // Clear label canvas
             ctx.clearRect(0, 0, labelCanvas.width, labelCanvas.height);
 
-            // Use program
             gl.useProgram(program);
-
-            // Set uniforms
             const projection = mat4Perspective(Math.PI / 3, canvas.width / canvas.height, 0.1, 1000);
             const view = getCameraMatrix();
             const model = mat4Identity();
-
             gl.uniformMatrix4fv(uniforms.projection, false, projection);
             gl.uniformMatrix4fv(uniforms.view, false, view);
             gl.uniformMatrix4fv(uniforms.model, false, model);
             gl.uniform3f(uniforms.lightDir, 0.5, 1, 0.3);
             gl.uniform3fv(uniforms.cameraPos, player.position);
 
-            // Draw planet
-            gl.bindVertexArray(vao);
-            gl.drawElements(gl.TRIANGLES, planet.indices.length, gl.UNSIGNED_INT, 0);
+            // Draw visible chunks
+            const visibleChunks = getVisibleChunks();
+            for (const chunk of visibleChunks) {
+                if (chunk.indexCount > 0 && chunk.vao) {
+                    gl.bindVertexArray(chunk.vao);
+                    gl.drawElements(gl.TRIANGLES, chunk.indexCount, gl.UNSIGNED_INT, 0);
+                }
+            }
 
-            // Draw trees
-            gl.bindVertexArray(treeVao);
-            gl.drawElements(gl.TRIANGLES, treeMesh.indices.length, gl.UNSIGNED_INT, 0);
+            // Block highlight
+            const lookDir = getLookDirection();
+            const hit = raycastBlock(player.position, lookDir, 20, gameState.topo, gameState.worldBlocks, gameState.findFace);
+            if (hit) {
+                drawBlockHighlight(hit.hitFace, hit.hitLayer, gameState.topo, view, projection);
+                gl.useProgram(program); // restore program
+                gl.uniformMatrix4fv(uniforms.projection, false, projection);
+                gl.uniformMatrix4fv(uniforms.view, false, view);
+                gl.uniformMatrix4fv(uniforms.model, false, model);
+                gl.uniform3f(uniforms.lightDir, 0.5, 1, 0.3);
+                gl.uniform3fv(uniforms.cameraPos, player.position);
+            }
 
             // Draw other players
-            gl.bindVertexArray(playerSphereVao);
             const vertexCount = playerSphereMesh.vertices.length / 3;
-            const pointerVertexCount = pointerMesh.vertices.length / 3;
-            
-            otherPlayers.forEach((otherPlayer) => {
-                // Create color array for this player
-                const colorArray = createColorArray(otherPlayer.color, vertexCount);
-                gl.bindBuffer(gl.ARRAY_BUFFER, playerSphereColorBuf);
-                gl.bufferData(gl.ARRAY_BUFFER, colorArray, gl.DYNAMIC_DRAW);
-                
-                // Create model matrix for this player (translate to position, scale)
-                const pos = otherPlayer.position;
-                const translateMat = mat4Translate(pos[0], pos[1], pos[2]);
-                const scaleMat = mat4Scale(PLAYER_SPHERE_RADIUS);
-                const playerModel = mat4Multiply(translateMat, scaleMat);
-                
-                gl.uniformMatrix4fv(uniforms.model, false, playerModel);
+            const pointerVertCount = pointerMesh.vertices.length / 3;
+            otherPlayers.forEach(op => {
+                const ca = createColorArray(op.color, vertexCount);
+                gl.bindBuffer(gl.ARRAY_BUFFER, psCBuf);
+                gl.bufferData(gl.ARRAY_BUFFER, ca, gl.DYNAMIC_DRAW);
+                const pos = op.position;
+                const tMat = mat4Translate(pos[0], pos[1], pos[2]);
+                const sMat = mat4Scale(PLAYER_SPHERE_RADIUS);
+                gl.uniformMatrix4fv(uniforms.model, false, mat4Multiply(tMat, sMat));
                 gl.bindVertexArray(playerSphereVao);
                 gl.drawElements(gl.TRIANGLES, playerSphereMesh.indices.length, gl.UNSIGNED_INT, 0);
-                
-                // Draw look direction pointer
-                const playerUp = normalize(pos);
-                let lookDir = otherPlayer.forward || [0, 0, -1];
-                // Ensure lookDir is normalized and tangent to sphere
-                lookDir = subtract(lookDir, scale(playerUp, dot(lookDir, playerUp)));
-                if (length(lookDir) < 0.001) {
-                    lookDir = [0, 0, -1]; // Fallback
-                }
-                lookDir = normalize(lookDir);
-                
-                // Apply pitch to get the actual 3D look direction
-                const pitch = otherPlayer.pitch || 0;
-                const lookDir3D = applyPitchToForward(lookDir, playerUp, pitch);
-                
-                // Create rotation matrix to orient pointer
-                const rotMat = mat4FromLookDirection(lookDir3D, playerUp);
-                const pointerTranslate = mat4Translate(pos[0], pos[1], pos[2]);
-                const pointerModel = mat4Multiply(pointerTranslate, rotMat);
-                
-                // Slightly darker color for pointer
-                const pointerColor = {
-                    r: otherPlayer.color.r * 0.7,
-                    g: otherPlayer.color.g * 0.7,
-                    b: otherPlayer.color.b * 0.7
-                };
-                const pointerColorArray = createColorArray(pointerColor, pointerVertexCount);
-                
+
+                // Pointer
+                const pUp = normalize(pos);
+                let ld = op.forward || [0,0,-1];
+                ld = subtract(ld, scale(pUp, dot(ld, pUp)));
+                if (length(ld) < 0.001) ld = [0,0,-1];
+                ld = normalize(ld);
+                const ld3d = applyPitchToForward(ld, pUp, op.pitch || 0);
+                const rm = mat4FromLookDirection(ld3d, pUp);
+                const pt = mat4Translate(pos[0], pos[1], pos[2]);
+                const pc = { r: op.color.r*0.7, g: op.color.g*0.7, b: op.color.b*0.7 };
                 gl.bindVertexArray(pointerVao);
-                gl.bindBuffer(gl.ARRAY_BUFFER, pointerColorBuf);
-                gl.bufferData(gl.ARRAY_BUFFER, pointerColorArray, gl.DYNAMIC_DRAW);
-                gl.uniformMatrix4fv(uniforms.model, false, pointerModel);
+                gl.bindBuffer(gl.ARRAY_BUFFER, ptCBuf);
+                gl.bufferData(gl.ARRAY_BUFFER, createColorArray(pc, pointerVertCount), gl.DYNAMIC_DRAW);
+                gl.uniformMatrix4fv(uniforms.model, false, mat4Multiply(pt, rm));
                 gl.drawElements(gl.TRIANGLES, pointerMesh.indices.length, gl.UNSIGNED_INT, 0);
-                
-                // Draw nametag above player
-                const nametagPos = [pos[0], pos[1], pos[2]];
-                // Offset nametag above the sphere (in the direction away from planet center)
-                const upDir = normalize(pos);
-                nametagPos[0] += upDir[0] * (PLAYER_SPHERE_RADIUS + 1.5);
-                nametagPos[1] += upDir[1] * (PLAYER_SPHERE_RADIUS + 1.5);
-                nametagPos[2] += upDir[2] * (PLAYER_SPHERE_RADIUS + 1.5);
-                
-                const screenPos = projectToScreen(nametagPos, view, projection);
-                if (screenPos) {
-                    drawNametag(otherPlayer.id, screenPos, otherPlayer.color);
-                }
+
+                // Nametag
+                const ntp = [pos[0]+pUp[0]*(PLAYER_SPHERE_RADIUS+1.5), pos[1]+pUp[1]*(PLAYER_SPHERE_RADIUS+1.5), pos[2]+pUp[2]*(PLAYER_SPHERE_RADIUS+1.5)];
+                const sp = projectToScreen(ntp, view, projection);
+                if (sp) drawNametag(op.id, sp, op.color);
             });
-            
-            // Update player count
+
             document.getElementById('playerCount').textContent = otherPlayers.size + 1;
-            
-            // Reset model matrix
             gl.uniformMatrix4fv(uniforms.model, false, model);
 
             requestAnimationFrame(render);
         }
 
-        requestAnimationFrame(render);
+        // Start the game
+        initGame();
     </script>
 </body>
 </html>
