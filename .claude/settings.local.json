@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"c:\\\\Users\\\\26200.7462\\\\opusglobe\" log --oneline --all)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd voxel mining/building on icosphere globe\n\nConvert smooth-sphere planet into Minecraft-like voxel game with\nicosphere topology \\(triangular prism blocks\\). Features: 15 block\nlayers \\(7 underground + surface + 7 above\\), chunk-based rendering,\nblock breaking/placing, raycasting, terrain generation with trees,\nand multiplayer block sync.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git config:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

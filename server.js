@@ -46,6 +46,50 @@ const players = new Map();
 
 // Store world block changes (delta from procedural generation)
 const worldChanges = new Map(); // key: `${face}_${layer}` -> blockType
+const WORLD_FILE = path.join(__dirname, 'world.json');
+
+// Load world from disk
+function loadWorld() {
+    try {
+        if (fs.existsSync(WORLD_FILE)) {
+            const data = JSON.parse(fs.readFileSync(WORLD_FILE, 'utf8'));
+            for (const [key, block] of Object.entries(data)) {
+                worldChanges.set(key, block);
+            }
+            console.log(`Loaded ${worldChanges.size} block changes from disk`);
+        }
+    } catch (e) {
+        console.error('Error loading world:', e);
+    }
+}
+
+loadWorld();
+
+// Server tick at 16 tps
+const TICK_RATE = 16;
+const TICK_MS = 1000 / TICK_RATE;
+let worldDirty = false;
+
+function tick() {
+    if (worldDirty) {
+        worldDirty = false;
+        try {
+            const data = {};
+            for (const [key, block] of worldChanges) {
+                data[key] = block;
+            }
+            fs.writeFileSync(WORLD_FILE, JSON.stringify(data));
+        } catch (e) {
+            console.error('Error saving world:', e);
+        }
+    }
+}
+
+setInterval(tick, TICK_MS);
+
+function markWorldDirty() {
+    worldDirty = true;
+}
 
 // Generate UUID
 function generateUUID() {
@@ -154,6 +198,7 @@ wss.on('connection', (ws) => {
             if (data.type === 'blockChange') {
                 const key = `${data.face}_${data.layer}`;
                 worldChanges.set(key, data.block);
+                markWorldDirty();
                 broadcast({
                     type: 'blockChange',
                     face: data.face,

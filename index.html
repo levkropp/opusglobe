@@ -56,6 +56,18 @@
             position: absolute; top: 2px; left: 4px; font-size: 10px;
             color: rgba(255,255,255,0.6); font-family: monospace;
         }
+        #sprintBar {
+            position: fixed; bottom: 76px; left: 50%; transform: translateX(-50%);
+            width: 200px; height: 4px; background: rgba(0,0,0,0.4);
+            border-radius: 2px; z-index: 50; pointer-events: none;
+            transition: opacity 0.3s;
+        }
+        #sprintFill {
+            height: 100%; background: rgba(255,255,255,0.7);
+            border-radius: 2px; width: 100%; transition: background 0.2s;
+        }
+        #sprintFill.low { background: rgba(255,100,100,0.8); }
+        #sprintFill.sprinting { background: rgba(100,200,255,0.8); }
 
         /* Mobile touch controls */
         .touch-controls {
@@ -68,6 +80,7 @@
             #crosshair { display: none; }
             #ui { font-size: 11px; padding: 6px; }
             #hotbar { bottom: 42vh; }
+            #sprintBar { bottom: calc(42vh + 58px); }
         }
         .trackpad {
             width: 50%; height: 100%; pointer-events: auto; position: relative;
@@ -120,12 +133,13 @@
     <div id="instructions">
         <h2>Voxel Globe</h2>
         <p><br>Click to start</p>
-        <p><br>WASD - Move &nbsp; Space - Jump</p>
+        <p><br>WASD - Move &nbsp; Space - Jump &nbsp; Shift - Sprint</p>
         <p>Mouse - Look &nbsp; ESC - Release</p>
         <p>Left Click - Break &nbsp; Right Click - Place</p>
         <p>1-7 - Select block type</p>
     </div>
     <div id="crosshair"></div>
+    <div id="sprintBar"><div id="sprintFill"></div></div>
     <div id="hotbar"></div>
 
     <div class="touch-controls" id="touchControls">
@@ -305,15 +319,17 @@
         // ===== CONFIGURATION =====
         // Cube-sphere: R=214, N=168, h=2.0 → cell side = Rπ/(2N) ≈ 2.001 → near-perfect cubes
         const PLANET_RADIUS = 214;
-        const PLAYER_HEIGHT = 2;
-        const GRAVITY = 30;
-        const MOVE_SPEED = 15;
-        const JUMP_VELOCITY = 12;
+        const GRAVITY = 55;
+        const MOVE_SPEED = 7.5;
+        const SPRINT_SPEED = 15;
+        const JUMP_VELOCITY = 17;
         const GRID_N = 168; // cells per cube face edge
         const NUM_LAYERS = 15;
         const SURFACE_LAYER = 7;
         const BLOCK_HEIGHT = 2.0;
         const INNER_RADIUS = PLANET_RADIUS - SURFACE_LAYER * BLOCK_HEIGHT; // 200
+        const PLAYER_HEIGHT = 1.8 * BLOCK_HEIGHT; // 3.6 total collision height
+        const PLAYER_EYE_HEIGHT = 1.62 * BLOCK_HEIGHT; // 3.24 camera offset from feet
         const CHUNK_N = 24; // cells per chunk edge
         const CHUNKS_PER_EDGE = GRID_N / CHUNK_N; // 7
         const CHUNKS_PER_FACE = CHUNKS_PER_EDGE * CHUNKS_PER_EDGE; // 49
@@ -330,8 +346,9 @@
         const BLOCK_SAND = 5;
         const BLOCK_WOOD = 6;
         const BLOCK_LEAVES = 7;
+        const BLOCK_ICE = 8;
 
-        const BLOCK_NAMES = ['Air', 'Grass', 'Dirt', 'Stone', 'Water', 'Sand', 'Wood', 'Leaves'];
+        const BLOCK_NAMES = ['Air', 'Grass', 'Dirt', 'Stone', 'Water', 'Sand', 'Wood', 'Leaves', 'Ice'];
         const BLOCK_COLORS = [
             [0,0,0],             // air (unused)
             [0.3, 0.7, 0.2],    // grass top
@@ -341,176 +358,176 @@
             [0.9, 0.85, 0.6],   // sand
             [0.45, 0.28, 0.12], // wood
             [0.15, 0.55, 0.15], // leaves
+            [0.7, 0.85, 0.95],  // ice
         ];
         // Grass side color (dirt-like)
         const GRASS_SIDE_COLOR = [0.5, 0.38, 0.22];
 
-        // ===== ICOSPHERE TOPOLOGY =====
-        function buildIcosphereTopology(subdivisions) {
-            const t = (1 + Math.sqrt(5)) / 2;
-            let vertices = [
-                [-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],
-                [0,-1,t],[0,1,t],[0,-1,-t],[0,1,-t],
-                [t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]
-            ].map(v => normalize(v));
-
-            let faces = [
-                [0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],
-                [1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],
-                [3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],
-                [4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]
+        // ===== CUBE-SPHERE TOPOLOGY =====
+        function buildCubeSphereTopology() {
+            // Face mappings: (u,v) -> (x,y,z) on cube, then normalize to sphere
+            // CCW winding from outside for each face
+            const FACE_MAPS = [
+                (u, v) => [1, v, -u],    // Face 0: +X
+                (u, v) => [-1, v, u],    // Face 1: -X
+                (u, v) => [u, 1, -v],    // Face 2: +Y
+                (u, v) => [u, -1, v],    // Face 3: -Y
+                (u, v) => [u, v, 1],     // Face 4: +Z
+                (u, v) => [-u, v, -1],   // Face 5: -Z
             ];
 
-            // Track parent-child for hierarchy and chunk assignment
-            // faceLevel[level] = array of face index arrays
-            const faceLevels = [faces.map((_, i) => i)]; // level 0: faces 0-19
-
-            const midpointCache = {};
-            function getMidpoint(i1, i2) {
-                const key = i1 < i2 ? `${i1}_${i2}` : `${i2}_${i1}`;
-                if (midpointCache[key] !== undefined) return midpointCache[key];
-                const v1 = vertices[i1], v2 = vertices[i2];
-                const mid = normalize([(v1[0]+v2[0])/2, (v1[1]+v2[1])/2, (v1[2]+v2[2])/2]);
-                vertices.push(mid);
-                midpointCache[key] = vertices.length - 1;
-                return midpointCache[key];
+            // Tan-mapped grid coordinates for uniform cell sizes
+            const N = GRID_N;
+            const tanVals = new Float64Array(N + 1);
+            for (let k = 0; k <= N; k++) {
+                tanVals[k] = Math.tan(Math.PI / 4 * (2 * k / N - 1));
             }
 
-            // faceChildren[faceIdx] = [child0, child1, child2, child3] at next level
-            const faceChildren = [];
+            // Generate vertices per face: 6 × (N+1)² vertices
+            const vertsPerFace = (N + 1) * (N + 1);
+            const totalVerts = 6 * vertsPerFace;
+            const vertices = new Array(totalVerts);
 
-            for (let level = 0; level < subdivisions; level++) {
-                const newFaces = [];
-                const levelIndices = [];
-                for (let fi = 0; fi < faces.length; fi++) {
-                    const face = faces[fi];
-                    const a = getMidpoint(face[0], face[1]);
-                    const b = getMidpoint(face[1], face[2]);
-                    const c = getMidpoint(face[2], face[0]);
-
-                    const startIdx = newFaces.length;
-                    newFaces.push([face[0], a, c]);
-                    newFaces.push([face[1], b, a]);
-                    newFaces.push([face[2], c, b]);
-                    newFaces.push([a, b, c]);
-
-                    faceChildren[fi + (level > 0 ? faces.length - newFaces.length + startIdx : 0)] = undefined; // placeholder
-                    // We track by absolute face index across all levels
-                }
-
-                // Build children mapping: each old face -> 4 new faces
-                // Old faces are indexed 0..faces.length-1 at current level
-                // New faces will be indexed 0..newFaces.length-1 at next level
-                const childMap = new Array(faces.length);
-                for (let fi = 0; fi < faces.length; fi++) {
-                    childMap[fi] = [fi * 4, fi * 4 + 1, fi * 4 + 2, fi * 4 + 3];
-                }
-
-                faceLevels.push(newFaces.map((_, i) => i));
-                faces = newFaces;
-
-                // Store children mapping for this level
-                if (!buildIcosphereTopology._childMaps) buildIcosphereTopology._childMaps = [];
-                buildIcosphereTopology._childMaps[level] = childMap;
-            }
-
-            const faceCount = faces.length;
-            const vertexCount = vertices.length;
-
-            // Build flat arrays
-            const vertArray = new Float64Array(vertexCount * 3);
-            for (let i = 0; i < vertexCount; i++) {
-                vertArray[i*3] = vertices[i][0];
-                vertArray[i*3+1] = vertices[i][1];
-                vertArray[i*3+2] = vertices[i][2];
-            }
-
-            const faceArray = new Uint32Array(faceCount * 3);
-            for (let i = 0; i < faceCount; i++) {
-                faceArray[i*3] = faces[i][0];
-                faceArray[i*3+1] = faces[i][1];
-                faceArray[i*3+2] = faces[i][2];
-            }
-
-            // Compute face centers
-            const faceCenters = new Float64Array(faceCount * 3);
-            for (let i = 0; i < faceCount; i++) {
-                const v0 = faces[i][0], v1 = faces[i][1], v2 = faces[i][2];
-                const cx = (vertices[v0][0] + vertices[v1][0] + vertices[v2][0]) / 3;
-                const cy = (vertices[v0][1] + vertices[v1][1] + vertices[v2][1]) / 3;
-                const cz = (vertices[v0][2] + vertices[v1][2] + vertices[v2][2]) / 3;
-                const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
-                faceCenters[i*3] = cx/cl;
-                faceCenters[i*3+1] = cy/cl;
-                faceCenters[i*3+2] = cz/cl;
-            }
-
-            // Build face adjacency via edge map
-            const edgeMap = new Map();
-            function edgeKey(a, b) { return a < b ? (a * vertexCount + b) : (b * vertexCount + a); }
-
-            for (let i = 0; i < faceCount; i++) {
-                const v0 = faces[i][0], v1 = faces[i][1], v2 = faces[i][2];
-                const edges = [[v0,v1],[v1,v2],[v2,v0]];
-                for (let e = 0; e < 3; e++) {
-                    const key = edgeKey(edges[e][0], edges[e][1]);
-                    if (!edgeMap.has(key)) {
-                        edgeMap.set(key, []);
+            for (let face = 0; face < 6; face++) {
+                const mapFn = FACE_MAPS[face];
+                for (let jv = 0; jv <= N; jv++) {
+                    const v = tanVals[jv];
+                    for (let iv = 0; iv <= N; iv++) {
+                        const u = tanVals[iv];
+                        const raw = mapFn(u, v);
+                        const len = Math.sqrt(raw[0]*raw[0] + raw[1]*raw[1] + raw[2]*raw[2]);
+                        const vidx = face * vertsPerFace + jv * (N + 1) + iv;
+                        vertices[vidx] = [raw[0]/len, raw[1]/len, raw[2]/len];
                     }
-                    edgeMap.get(key).push({ face: i, edge: e });
                 }
             }
 
-            const faceNeighbors = new Int32Array(faceCount * 3).fill(-1);
-            for (const [, entries] of edgeMap) {
-                if (entries.length === 2) {
-                    const a = entries[0], b = entries[1];
-                    faceNeighbors[a.face * 3 + a.edge] = b.face;
-                    faceNeighbors[b.face * 3 + b.edge] = a.face;
+            // Face (cell) array: 4 vertex indices per quad cell
+            const faceCount = TOTAL_CELLS;
+            const faceArray = new Uint32Array(faceCount * 4);
+
+            for (let face = 0; face < 6; face++) {
+                for (let j = 0; j < N; j++) {
+                    for (let i = 0; i < N; i++) {
+                        const cellIdx = face * N * N + j * N + i;
+                        const bv = face * vertsPerFace + j * (N + 1) + i;
+                        // CCW from outside: v0(i,j), v1(i+1,j), v2(i+1,j+1), v3(i,j+1)
+                        faceArray[cellIdx * 4]     = bv;
+                        faceArray[cellIdx * 4 + 1] = bv + 1;
+                        faceArray[cellIdx * 4 + 2] = bv + (N + 1) + 1;
+                        faceArray[cellIdx * 4 + 3] = bv + (N + 1);
+                    }
                 }
             }
 
-            // Chunk assignment: trace ancestry to CHUNK_LEVEL
-            // At level 0 we have 20 faces. Each subdivision multiplies by 4.
-            // At CHUNK_LEVEL=2 we have 20*4^2=320 chunks.
-            // Each final face maps to one chunk.
-            // Strategy: for each final face, trace back through child maps to find level-2 ancestor.
-            const chunkCount = 20 * Math.pow(4, CHUNK_LEVEL); // 320
-            const facesPerChunk = Math.pow(4, subdivisions - CHUNK_LEVEL); // 4^3 = 64
+            // Face centers: average of 4 vertices, normalized
+            const faceCenters = new Float64Array(faceCount * 3);
+            for (let idx = 0; idx < faceCount; idx++) {
+                const v0 = vertices[faceArray[idx*4]];
+                const v1 = vertices[faceArray[idx*4+1]];
+                const v2 = vertices[faceArray[idx*4+2]];
+                const v3 = vertices[faceArray[idx*4+3]];
+                let cx = (v0[0]+v1[0]+v2[0]+v3[0])/4;
+                let cy = (v0[1]+v1[1]+v2[1]+v3[1])/4;
+                let cz = (v0[2]+v1[2]+v2[2]+v3[2])/4;
+                const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
+                faceCenters[idx*3] = cx/cl;
+                faceCenters[idx*3+1] = cy/cl;
+                faceCenters[idx*3+2] = cz/cl;
+            }
+
+            // Analytical face adjacency: 4 neighbors per cell
+            // Cross-face adjacency table: [neighborFace, ai, bi, ci, aj, bj, cj]
+            // neighbor i = ai*i + bi*j + ci, neighbor j = aj*i + bj*j + cj
+            const M = N - 1;
+            const CROSS_ADJ = [
+                /* Face 0 (+X) */ [
+                    [3, 0,0,M, -1,0,M],  // edge 0 (-j)
+                    [5, 0,0,0,  0,1,0],  // edge 1 (+i)
+                    [2, 0,0,M,  1,0,0],  // edge 2 (+j)
+                    [4, 0,0,M,  0,1,0],  // edge 3 (-i)
+                ],
+                /* Face 1 (-X) */ [
+                    [3, 0,0,0,  1,0,0],  // edge 0 (-j)
+                    [4, 0,0,0,  0,1,0],  // edge 1 (+i)
+                    [2, 0,0,0, -1,0,M],  // edge 2 (+j)
+                    [5, 0,0,M,  0,1,0],  // edge 3 (-i)
+                ],
+                /* Face 2 (+Y) */ [
+                    [4, 1,0,0,  0,0,M],  // edge 0 (-j)
+                    [0, 0,1,0,  0,0,M],  // edge 1 (+i)
+                    [5,-1,0,M,  0,0,M],  // edge 2 (+j)
+                    [1, 0,-1,M, 0,0,M],  // edge 3 (-i)
+                ],
+                /* Face 3 (-Y) */ [
+                    [5,-1,0,M,  0,0,0],  // edge 0 (-j)
+                    [0, 0,-1,M, 0,0,0],  // edge 1 (+i)
+                    [4, 1,0,0,  0,0,0],  // edge 2 (+j)
+                    [1, 0,1,0,  0,0,0],  // edge 3 (-i)
+                ],
+                /* Face 4 (+Z) */ [
+                    [3, 1,0,0,  0,0,M],  // edge 0 (-j)
+                    [0, 0,0,0,  0,1,0],  // edge 1 (+i)
+                    [2, 1,0,0,  0,0,0],  // edge 2 (+j)
+                    [1, 0,0,M,  0,1,0],  // edge 3 (-i)
+                ],
+                /* Face 5 (-Z) */ [
+                    [3,-1,0,M,  0,0,0],  // edge 0 (-j)
+                    [1, 0,0,0,  0,1,0],  // edge 1 (+i)
+                    [2,-1,0,M,  0,0,M],  // edge 2 (+j)
+                    [0, 0,0,M,  0,1,0],  // edge 3 (-i)
+                ],
+            ];
+
+            const faceNeighbors = new Int32Array(faceCount * 4).fill(-1);
+            for (let f = 0; f < 6; f++) {
+                for (let j = 0; j < N; j++) {
+                    for (let i = 0; i < N; i++) {
+                        const cellIdx = f * N * N + j * N + i;
+                        // 4 edges: 0=bottom(-j), 1=right(+i), 2=top(+j), 3=left(-i)
+                        const nbrs = [[i, j-1], [i+1, j], [i, j+1], [i-1, j]];
+                        for (let e = 0; e < 4; e++) {
+                            let ni = nbrs[e][0], nj = nbrs[e][1], nf = f;
+                            if (ni < 0 || ni >= N || nj < 0 || nj >= N) {
+                                const adj = CROSS_ADJ[f][e];
+                                nf = adj[0];
+                                ni = adj[1]*i + adj[2]*j + adj[3];
+                                nj = adj[4]*i + adj[5]*j + adj[6];
+                            }
+                            faceNeighbors[cellIdx * 4 + e] = nf * N * N + nj * N + ni;
+                        }
+                    }
+                }
+            }
+
+            // Chunk assignment: grid-based
+            const chunkCount = TOTAL_CHUNKS;
             const faceToChunk = new Uint16Array(faceCount);
+            const chunkFaceLists = new Array(chunkCount);
+            for (let c = 0; c < chunkCount; c++) chunkFaceLists[c] = [];
 
-            // Build forward mapping: for each level-2 face, find all level-5 descendants
-            // Using the child maps
-            const childMaps = buildIcosphereTopology._childMaps;
-
-            // Start with chunk-level faces (level CHUNK_LEVEL has chunkCount faces)
-            // Trace forward to final level
-            function getDescendants(faceIdx, fromLevel, toLevel) {
-                if (fromLevel === toLevel) return [faceIdx];
-                const children = childMaps[fromLevel];
-                if (!children || !children[faceIdx]) return [faceIdx];
-                const result = [];
-                for (const child of children[faceIdx]) {
-                    result.push(...getDescendants(child, fromLevel + 1, toLevel));
+            for (let f = 0; f < 6; f++) {
+                for (let j = 0; j < N; j++) {
+                    for (let i = 0; i < N; i++) {
+                        const cellIdx = f * N * N + j * N + i;
+                        const ci = Math.floor(i / CHUNK_N);
+                        const cj = Math.floor(j / CHUNK_N);
+                        const chunkIdx = f * CHUNKS_PER_FACE + cj * CHUNKS_PER_EDGE + ci;
+                        faceToChunk[cellIdx] = chunkIdx;
+                        chunkFaceLists[chunkIdx].push(cellIdx);
+                    }
                 }
-                return result;
             }
 
             const chunkFaces = new Array(chunkCount);
             const chunkCenters = new Float64Array(chunkCount * 3);
-
             for (let c = 0; c < chunkCount; c++) {
-                const descendants = getDescendants(c, CHUNK_LEVEL, subdivisions);
-                chunkFaces[c] = new Uint32Array(descendants);
-                for (const f of descendants) {
-                    faceToChunk[f] = c;
-                }
-                // Chunk center = average of face centers
+                chunkFaces[c] = new Uint32Array(chunkFaceLists[c]);
                 let cx = 0, cy = 0, cz = 0;
-                for (const f of descendants) {
-                    cx += faceCenters[f*3];
-                    cy += faceCenters[f*3+1];
-                    cz += faceCenters[f*3+2];
+                for (const fi of chunkFaceLists[c]) {
+                    cx += faceCenters[fi*3];
+                    cy += faceCenters[fi*3+1];
+                    cz += faceCenters[fi*3+2];
                 }
                 const cl = Math.sqrt(cx*cx + cy*cy + cz*cz);
                 chunkCenters[c*3] = cx/cl;
@@ -518,102 +535,49 @@
                 chunkCenters[c*3+2] = cz/cl;
             }
 
-            // Build hierarchical lookup: for each face at each level, store its 4 children
-            // We need: level 0 (20 faces) -> level 1 (80) -> ... -> level 5 (20480)
-            const hierarchy = [];
-            for (let level = 0; level < subdivisions; level++) {
-                hierarchy[level] = childMaps[level];
-            }
-
-            // Clean up
-            delete buildIcosphereTopology._childMaps;
-
             return {
-                vertices, vertArray, vertexCount,
-                faces, faceArray, faceCount,
+                vertices, faceArray, faceCount,
                 faceCenters, faceNeighbors,
                 faceToChunk, chunkFaces, chunkCenters, chunkCount,
-                hierarchy, facesPerChunk
             };
         }
 
-        // ===== FACE LOOKUP (centroid-based hierarchical descent) =====
-        function buildFaceLookup(topo) {
-            // Build face centroids at each subdivision level using compact Float64Arrays.
-            // This avoids storing full face vertex arrays (which would be huge at level 7).
-            const t = (1 + Math.sqrt(5)) / 2;
-            let verts = [
-                [-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],
-                [0,-1,t],[0,1,t],[0,-1,-t],[0,1,-t],
-                [t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]
-            ].map(v => normalize(v));
-            let faces = [
-                [0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],
-                [1,5,9],[5,11,4],[11,10,2],[10,7,6],[7,1,8],
-                [3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],
-                [4,9,5],[2,4,11],[6,2,10],[8,6,7],[9,8,1]
-            ];
-
-            function computeCentroids(faceList) {
-                const c = new Float64Array(faceList.length * 3);
-                for (let i = 0; i < faceList.length; i++) {
-                    const f = faceList[i];
-                    const v0 = verts[f[0]], v1 = verts[f[1]], v2 = verts[f[2]];
-                    let cx = (v0[0]+v1[0]+v2[0])/3, cy = (v0[1]+v1[1]+v2[1])/3, cz = (v0[2]+v1[2]+v2[2])/3;
-                    const cl = Math.sqrt(cx*cx+cy*cy+cz*cz);
-                    c[i*3] = cx/cl; c[i*3+1] = cy/cl; c[i*3+2] = cz/cl;
-                }
-                return c;
-            }
-
-            const levelCentroids = [computeCentroids(faces)];
-            const mc = {};
-            function gm(a,b) {
-                const k = a<b ? a*200000+b : b*200000+a; // numeric key for speed
-                if (mc[k] !== undefined) return mc[k];
-                const v1=verts[a], v2=verts[b];
-                verts.push(normalize([(v1[0]+v2[0])/2,(v1[1]+v2[1])/2,(v1[2]+v2[2])/2]));
-                mc[k] = verts.length-1;
-                return mc[k];
-            }
-
-            for (let level = 0; level < SUBDIVISIONS; level++) {
-                const nf = [];
-                for (const f of faces) {
-                    const a=gm(f[0],f[1]), b=gm(f[1],f[2]), c=gm(f[2],f[0]);
-                    nf.push([f[0],a,c], [f[1],b,a], [f[2],c,b], [a,b,c]);
-                }
-                faces = nf;
-                levelCentroids.push(computeCentroids(faces));
-            }
-
-            // Free intermediate data
-            verts = null; faces = null;
-
-            const numLevels = levelCentroids.length; // SUBDIVISIONS + 1
+        // ===== FACE LOOKUP (O(1) cube-sphere projection) =====
+        function buildFaceLookup() {
+            const N = GRID_N;
+            const invPiOver4 = 4 / Math.PI;
+            const halfN = N / 2;
 
             return function findClosestFace(dir) {
-                const dx = dir[0], dy = dir[1], dz = dir[2];
-                // Level 0: test all 20 base faces
-                let c0 = levelCentroids[0];
-                let best = 0, bestDot = dx*c0[0] + dy*c0[1] + dz*c0[2];
-                for (let i = 1; i < 20; i++) {
-                    const d = dx*c0[i*3] + dy*c0[i*3+1] + dz*c0[i*3+2];
-                    if (d > bestDot) { bestDot = d; best = i; }
-                }
-                // Descend through levels
-                for (let level = 1; level < numLevels; level++) {
-                    const cl = levelCentroids[level];
-                    const base = best * 4;
-                    best = base;
-                    bestDot = dx*cl[base*3] + dy*cl[base*3+1] + dz*cl[base*3+2];
-                    for (let c = 1; c < 4; c++) {
-                        const idx = (base + c) * 3;
-                        const d = dx*cl[idx] + dy*cl[idx+1] + dz*cl[idx+2];
-                        if (d > bestDot) { bestDot = d; best = base + c; }
+                const ax = Math.abs(dir[0]), ay = Math.abs(dir[1]), az = Math.abs(dir[2]);
+                let face, u, v;
+
+                if (ax >= ay && ax >= az) {
+                    if (dir[0] > 0) {
+                        face = 0; u = -dir[2]/ax; v = dir[1]/ax;
+                    } else {
+                        face = 1; u = dir[2]/ax; v = dir[1]/ax;
+                    }
+                } else if (ay >= ax && ay >= az) {
+                    if (dir[1] > 0) {
+                        face = 2; u = dir[0]/ay; v = -dir[2]/ay;
+                    } else {
+                        face = 3; u = dir[0]/ay; v = dir[2]/ay;
+                    }
+                } else {
+                    if (dir[2] > 0) {
+                        face = 4; u = dir[0]/az; v = dir[1]/az;
+                    } else {
+                        face = 5; u = -dir[0]/az; v = dir[1]/az;
                     }
                 }
-                return best;
+
+                let i = Math.floor((Math.atan(u) * invPiOver4 + 1) * halfN);
+                let j = Math.floor((Math.atan(v) * invPiOver4 + 1) * halfN);
+                if (i < 0) i = 0; else if (i >= N) i = N - 1;
+                if (j < 0) j = 0; else if (j >= N) j = N - 1;
+
+                return face * N * N + j * N + i;
             };
         }
 
@@ -651,6 +615,40 @@
                         worldBlocks[f * NUM_LAYERS + layer] = BLOCK_DIRT;
                     } else {
                         worldBlocks[f * NUM_LAYERS + layer] = BLOCK_STONE;
+                    }
+                }
+            }
+
+            // Cave generation: carve caves using 3D noise
+            for (let f = 0; f < topo.faceCount; f++) {
+                const cx = topo.faceCenters[f*3];
+                const cy = topo.faceCenters[f*3+1];
+                const cz = topo.faceCenters[f*3+2];
+
+                // Find surface layer for this column
+                let surfLayer = -1;
+                for (let l = NUM_LAYERS - 1; l >= 0; l--) {
+                    const b = worldBlocks[f * NUM_LAYERS + l];
+                    if (b !== BLOCK_AIR && b !== BLOCK_WATER) { surfLayer = l; break; }
+                }
+                if (surfLayer < 3) continue;
+
+                for (let layer = 1; layer <= surfLayer; layer++) {
+                    const r = INNER_RADIUS + (layer + 0.5) * BLOCK_HEIGHT;
+                    const px = cx * r, py = cy * r, pz = cz * r;
+
+                    // Cave noise at different frequency/offset from terrain
+                    const cave = noise3D(px * 0.06 + 500, py * 0.06 + 500, pz * 0.06 + 500);
+
+                    // Higher threshold near surface = fewer openings
+                    const depth = surfLayer - layer;
+                    let threshold;
+                    if (depth === 0) threshold = 0.55;
+                    else if (depth === 1) threshold = 0.42;
+                    else threshold = 0.32;
+
+                    if (cave > threshold) {
+                        worldBlocks[f * NUM_LAYERS + layer] = BLOCK_AIR;
                     }
                 }
             }
@@ -733,16 +731,21 @@
             }
 
             for (const faceIdx of chunk.faceIndices) {
-                const vi0 = topo.faceArray[faceIdx * 3];
-                const vi1 = topo.faceArray[faceIdx * 3 + 1];
-                const vi2 = topo.faceArray[faceIdx * 3 + 2];
-                const d0 = topo.vertices[vi0];
-                const d1 = topo.vertices[vi1];
-                const d2 = topo.vertices[vi2];
+                // 4 vertices per quad cell
+                const vi0 = topo.faceArray[faceIdx * 4];
+                const vi1 = topo.faceArray[faceIdx * 4 + 1];
+                const vi2 = topo.faceArray[faceIdx * 4 + 2];
+                const vi3 = topo.faceArray[faceIdx * 4 + 3];
+                const d0 = topo.vertices[vi0]; // (i, j)
+                const d1 = topo.vertices[vi1]; // (i+1, j)
+                const d2 = topo.vertices[vi2]; // (i+1, j+1)
+                const d3 = topo.vertices[vi3]; // (i, j+1)
 
-                const n0 = topo.faceNeighbors[faceIdx * 3];
-                const n1 = topo.faceNeighbors[faceIdx * 3 + 1];
-                const n2 = topo.faceNeighbors[faceIdx * 3 + 2];
+                // 4 neighbors
+                const nb0 = topo.faceNeighbors[faceIdx * 4];     // edge 0: bottom (-j)
+                const nb1 = topo.faceNeighbors[faceIdx * 4 + 1]; // edge 1: right (+i)
+                const nb2 = topo.faceNeighbors[faceIdx * 4 + 2]; // edge 2: top (+j)
+                const nb3 = topo.faceNeighbors[faceIdx * 4 + 3]; // edge 3: left (-i)
 
                 const faceCenter = [
                     topo.faceCenters[faceIdx*3],
@@ -753,7 +756,7 @@
                 for (let layer = 0; layer < NUM_LAYERS; layer++) {
                     const block = getBlock(worldBlocks, faceIdx, layer);
                     if (block === BLOCK_AIR) continue;
-                    if (block === BLOCK_WATER) continue; // skip water rendering for now
+                    if (block === BLOCK_WATER) continue;
 
                     const rI = layerInnerRadius(layer);
                     const rO = layerOuterRadius(layer);
@@ -761,58 +764,50 @@
                     const topColor = (block === BLOCK_GRASS) ? BLOCK_COLORS[BLOCK_GRASS] : BLOCK_COLORS[block];
                     const sideColor = (block === BLOCK_GRASS) ? GRASS_SIDE_COLOR : BLOCK_COLORS[block];
 
-                    // 6 corner positions
-                    const p0i = scale(d0, rI), p1i = scale(d1, rI), p2i = scale(d2, rI);
-                    const p0o = scale(d0, rO), p1o = scale(d1, rO), p2o = scale(d2, rO);
+                    // 8 corner positions (4 inner + 4 outer)
+                    const p0i = scale(d0, rI), p1i = scale(d1, rI);
+                    const p2i = scale(d2, rI), p3i = scale(d3, rI);
+                    const p0o = scale(d0, rO), p1o = scale(d1, rO);
+                    const p2o = scale(d2, rO), p3o = scale(d3, rO);
 
-                    // Top face (outer) - check block above
-                    const above = getBlock(worldBlocks, faceIdx, layer + 1);
-                    if (isTransparent(above)) {
-                        emitTri(p0o, p1o, p2o, faceCenter, topColor);
+                    // Top face (outer quad) - 2 triangles
+                    if (isTransparent(getBlock(worldBlocks, faceIdx, layer + 1))) {
+                        emitQuad(p0o, p1o, p2o, p3o, faceCenter, topColor);
                     }
 
-                    // Bottom face (inner) - check block below
-                    const below = getBlock(worldBlocks, faceIdx, layer - 1);
-                    if (isTransparent(below)) {
+                    // Bottom face (inner quad, reversed winding)
+                    if (isTransparent(getBlock(worldBlocks, faceIdx, layer - 1))) {
                         const negCenter = scale(faceCenter, -1);
-                        emitTri(p0i, p2i, p1i, negCenter, sideColor);
+                        emitQuad(p0i, p3i, p2i, p1i, negCenter, sideColor);
                     }
 
-                    // Side faces: normal = outward from face center toward edge midpoint
-                    // Side face 0: edge v0-v1, neighbor n0
-                    if (n0 >= 0 && isTransparent(getBlock(worldBlocks, n0, layer))) {
-                        const em0 = normalize([(d0[0]+d1[0])/2,(d0[1]+d1[1])/2,(d0[2]+d1[2])/2]);
-                        const sn0 = normalize([em0[0]-faceCenter[0],em0[1]-faceCenter[1],em0[2]-faceCenter[2]]);
-                        const tn0 = cross(subtract(p1i, p0i), subtract(p1o, p0i));
-                        if (dot(tn0, sn0) > 0) {
-                            emitQuad(p0i, p1i, p1o, p0o, sn0, sideColor);
-                        } else {
-                            emitQuad(p0i, p0o, p1o, p1i, sn0, sideColor);
-                        }
+                    // 4 side faces: normal = outward from face center toward edge midpoint
+                    // Side 0: edge v0->v1 (bottom, -j neighbor)
+                    if (nb0 >= 0 && isTransparent(getBlock(worldBlocks, nb0, layer))) {
+                        const em = normalize([(d0[0]+d1[0])/2,(d0[1]+d1[1])/2,(d0[2]+d1[2])/2]);
+                        const sn = normalize(subtract(em, faceCenter));
+                        emitQuad(p0i, p1i, p1o, p0o, sn, sideColor);
                     }
 
-                    // Side face 1: edge v1-v2, neighbor n1
-                    if (n1 >= 0 && isTransparent(getBlock(worldBlocks, n1, layer))) {
-                        const em1 = normalize([(d1[0]+d2[0])/2,(d1[1]+d2[1])/2,(d1[2]+d2[2])/2]);
-                        const sn1 = normalize([em1[0]-faceCenter[0],em1[1]-faceCenter[1],em1[2]-faceCenter[2]]);
-                        const tn1 = cross(subtract(p2i, p1i), subtract(p2o, p1i));
-                        if (dot(tn1, sn1) > 0) {
-                            emitQuad(p1i, p2i, p2o, p1o, sn1, sideColor);
-                        } else {
-                            emitQuad(p1i, p1o, p2o, p2i, sn1, sideColor);
-                        }
+                    // Side 1: edge v1->v2 (right, +i neighbor)
+                    if (nb1 >= 0 && isTransparent(getBlock(worldBlocks, nb1, layer))) {
+                        const em = normalize([(d1[0]+d2[0])/2,(d1[1]+d2[1])/2,(d1[2]+d2[2])/2]);
+                        const sn = normalize(subtract(em, faceCenter));
+                        emitQuad(p1i, p2i, p2o, p1o, sn, sideColor);
                     }
 
-                    // Side face 2: edge v2-v0, neighbor n2
-                    if (n2 >= 0 && isTransparent(getBlock(worldBlocks, n2, layer))) {
-                        const em2 = normalize([(d2[0]+d0[0])/2,(d2[1]+d0[1])/2,(d2[2]+d0[2])/2]);
-                        const sn2 = normalize([em2[0]-faceCenter[0],em2[1]-faceCenter[1],em2[2]-faceCenter[2]]);
-                        const tn2 = cross(subtract(p0i, p2i), subtract(p0o, p2i));
-                        if (dot(tn2, sn2) > 0) {
-                            emitQuad(p2i, p0i, p0o, p2o, sn2, sideColor);
-                        } else {
-                            emitQuad(p2i, p2o, p0o, p0i, sn2, sideColor);
-                        }
+                    // Side 2: edge v2->v3 (top, +j neighbor)
+                    if (nb2 >= 0 && isTransparent(getBlock(worldBlocks, nb2, layer))) {
+                        const em = normalize([(d2[0]+d3[0])/2,(d2[1]+d3[1])/2,(d2[2]+d3[2])/2]);
+                        const sn = normalize(subtract(em, faceCenter));
+                        emitQuad(p2i, p3i, p3o, p2o, sn, sideColor);
+                    }
+
+                    // Side 3: edge v3->v0 (left, -i neighbor)
+                    if (nb3 >= 0 && isTransparent(getBlock(worldBlocks, nb3, layer))) {
+                        const em = normalize([(d3[0]+d0[0])/2,(d3[1]+d0[1])/2,(d3[2]+d0[2])/2]);
+                        const sn = normalize(subtract(em, faceCenter));
+                        emitQuad(p3i, p0i, p0o, p3o, sn, sideColor);
                     }
                 }
             }
@@ -870,25 +865,29 @@
         }
 
         function drawBlockHighlight(faceIdx, layer, topo, viewMat, projMat) {
-            const vi0 = topo.faceArray[faceIdx * 3];
-            const vi1 = topo.faceArray[faceIdx * 3 + 1];
-            const vi2 = topo.faceArray[faceIdx * 3 + 2];
+            const vi0 = topo.faceArray[faceIdx * 4];
+            const vi1 = topo.faceArray[faceIdx * 4 + 1];
+            const vi2 = topo.faceArray[faceIdx * 4 + 2];
+            const vi3 = topo.faceArray[faceIdx * 4 + 3];
             const d0 = topo.vertices[vi0];
             const d1 = topo.vertices[vi1];
             const d2 = topo.vertices[vi2];
+            const d3 = topo.vertices[vi3];
             const rI = layerInnerRadius(layer);
             const rO = layerOuterRadius(layer);
 
-            // 6 corners slightly expanded outward for visibility
-            const expand = 1.002;
+            // 8 corners slightly expanded for z-fighting avoidance
+            const eps = 0.02;
             const verts = [
-                ...scale(d0, rI * expand), ...scale(d1, rI * expand), ...scale(d2, rI * expand),
-                ...scale(d0, rO * expand), ...scale(d1, rO * expand), ...scale(d2, rO * expand),
+                ...scale(d0, rI - eps), ...scale(d1, rI - eps),
+                ...scale(d2, rI - eps), ...scale(d3, rI - eps),
+                ...scale(d0, rO + eps), ...scale(d1, rO + eps),
+                ...scale(d2, rO + eps), ...scale(d3, rO + eps),
             ];
             const lineIndices = [
-                0,1, 1,2, 2,0,  // inner triangle
-                3,4, 4,5, 5,3,  // outer triangle
-                0,3, 1,4, 2,5   // vertical edges
+                0,1, 1,2, 2,3, 3,0,  // inner quad
+                4,5, 5,6, 6,7, 7,4,  // outer quad
+                0,4, 1,5, 2,6, 3,7   // vertical edges
             ];
 
             gl.useProgram(hlProgram);
@@ -1029,6 +1028,7 @@
         // ===== MULTIPLAYER =====
         const otherPlayers = new Map();
         let myPlayerId = null, myPlayerColor = null, ws = null;
+        let pendingWorldChanges = [];
         const PLAYER_SPHERE_RADIUS = 1.0;
 
         function connectWebSocket() {
@@ -1060,6 +1060,8 @@
                         if (gameState) {
                             setBlock(gameState.worldBlocks, data.face, data.layer, data.block);
                             markChunkDirty(data.face);
+                        } else {
+                            pendingWorldChanges.push({ face: data.face, layer: data.layer, block: data.block });
                         }
                         break;
                     case 'worldState':
@@ -1068,6 +1070,8 @@
                                 setBlock(gameState.worldBlocks, c.face, c.layer, c.block);
                                 markChunkDirty(c.face);
                             }
+                        } else if (data.changes) {
+                            pendingWorldChanges.push(...data.changes);
                         }
                         break;
                 }
@@ -1095,11 +1099,13 @@
 
         // ===== PLAYER STATE =====
         const player = {
-            position: [0, PLANET_RADIUS + PLAYER_HEIGHT + 10, 0],
+            position: [0, PLANET_RADIUS + PLAYER_EYE_HEIGHT + 10, 0],
             velocity: [0, 0, 0],
             forward: [0, 0, -1],
             pitch: 0,
-            grounded: false
+            grounded: false,
+            sprintMeter: 100, // 0-100, drains while sprinting, regens when not
+            isSprinting: false
         };
 
         let selectedBlockType = BLOCK_GRASS;
@@ -1279,7 +1285,7 @@
             if (e.code === 'Space') e.preventDefault();
             // Block selection 1-7
             const num = parseInt(e.key);
-            if (num >= 1 && num <= 7) {
+            if (num >= 1 && num <= 8) {
                 selectedBlockType = num;
                 updateHotbar();
             }
@@ -1320,7 +1326,7 @@
         const hotbarEl = document.getElementById('hotbar');
         function buildHotbar() {
             hotbarEl.innerHTML = '';
-            for (let i = 1; i <= 7; i++) {
+            for (let i = 1; i <= 8; i++) {
                 const slot = document.createElement('div');
                 slot.className = 'hotbar-slot' + (i === selectedBlockType ? ' selected' : '');
                 const preview = document.createElement('div');
@@ -1351,8 +1357,8 @@
             gameState.chunks[chunkIdx].dirty = true;
             // Also dirty neighbor chunks if face is on boundary
             const topo = gameState.topo;
-            for (let e = 0; e < 3; e++) {
-                const nf = topo.faceNeighbors[faceIdx * 3 + e];
+            for (let e = 0; e < 4; e++) {
+                const nf = topo.faceNeighbors[faceIdx * 4 + e];
                 if (nf >= 0) {
                     const nc = topo.faceToChunk[nf];
                     if (nc !== chunkIdx) gameState.chunks[nc].dirty = true;
@@ -1388,13 +1394,21 @@
             const dir = getLookDirection();
             const hit = raycastBlock(player.position, dir, 20, gameState.topo, gameState.worldBlocks, gameState.findFace);
             if (hit && hit.placeFace >= 0 && hit.placeLayer >= 0) {
-                // Don't place inside player
-                const placeR = layerOuterRadius(hit.placeLayer);
-                const playerR = length(player.position);
-                if (Math.abs(placeR - playerR) < PLAYER_HEIGHT * 1.5) {
-                    const pDir = normalize(player.position);
-                    const pFace = gameState.findFace(pDir);
-                    if (pFace === hit.placeFace) return;
+                // Don't place inside any player — check actual body overlap
+                const blockInner = layerInnerRadius(hit.placeLayer);
+                const blockOuter = layerOuterRadius(hit.placeLayer);
+                function overlapsPlayer(pos) {
+                    const feet = length(pos) - PLAYER_EYE_HEIGHT;
+                    const head = feet + PLAYER_HEIGHT;
+                    if (blockOuter > feet && blockInner < head) {
+                        const face = gameState.findFace(normalize(pos));
+                        if (face === hit.placeFace) return true;
+                    }
+                    return false;
+                }
+                if (overlapsPlayer(player.position)) return;
+                for (const op of otherPlayers.values()) {
+                    if (overlapsPlayer(op.position)) return;
                 }
                 setBlock(gameState.worldBlocks, hit.placeFace, hit.placeLayer, selectedBlockType);
                 markChunkDirty(hit.placeFace);
@@ -1406,7 +1420,11 @@
         function getTerrainHeight(pos, topo, worldBlocks, findFace) {
             const dir = normalize(pos);
             const face = findFace(dir);
-            for (let l = NUM_LAYERS - 1; l >= 0; l--) {
+            const dist = length(pos);
+            // Scan downward from player's feet layer, not from top of world
+            const feetLayer = Math.floor((dist - PLAYER_EYE_HEIGHT - INNER_RADIUS) / BLOCK_HEIGHT);
+            const startLayer = Math.min(Math.max(feetLayer, 0), NUM_LAYERS - 1);
+            for (let l = startLayer; l >= 0; l--) {
                 const b = getBlock(worldBlocks, face, l);
                 if (b !== BLOCK_AIR && b !== BLOCK_WATER) return layerOuterRadius(l);
             }
@@ -1432,14 +1450,52 @@
             if (moveInput.y !== 0) moveDir = add(moveDir, scale(forward, moveInput.y));
             if (moveInput.x !== 0) moveDir = add(moveDir, scale(right, moveInput.x));
 
+            // Sprint: shift + moving forward + meter above 20%
+            const wantsSprint = keys['ShiftLeft'] && moveInput.y > 0 && player.sprintMeter > 20;
+            player.isSprinting = wantsSprint && length(moveDir) > 0;
+
+            if (player.isSprinting) {
+                // Drain: 100/6 per second = empties in 6 seconds
+                player.sprintMeter = Math.max(0, player.sprintMeter - (100 / 6) * dt);
+            } else {
+                // Regen with S-curve: slow at extremes (<10%, >90%), fast in middle
+                // Total regen time ~10 seconds from empty
+                const t = player.sprintMeter / 100;
+                const rate = 17 * (0.2 + 0.8 * Math.sin(t * Math.PI));
+                player.sprintMeter = Math.min(100, player.sprintMeter + rate * dt);
+            }
+
+            const speed = player.isSprinting ? SPRINT_SPEED : MOVE_SPEED;
+
+            // Check if standing on ice
+            const standDir = normalize(player.position);
+            const standFace = gameState.findFace(standDir);
+            const feetDist = length(player.position) - PLAYER_EYE_HEIGHT;
+            const standLayer = Math.floor((feetDist - INNER_RADIUS) / BLOCK_HEIGHT) - 1;
+            const onIce = player.grounded && standLayer >= 0 && standLayer < NUM_LAYERS &&
+                getBlock(gameState.worldBlocks, standFace, standLayer) === BLOCK_ICE;
+
             if (length(moveDir) > 0) {
                 moveDir = normalize(moveDir);
                 const verticalVel = scale(up, dot(player.velocity, up));
-                player.velocity = add(verticalVel, scale(moveDir, MOVE_SPEED));
+                if (onIce) {
+                    const horizontalVel = subtract(player.velocity, verticalVel);
+                    const target = scale(moveDir, speed);
+                    const blended = add(scale(horizontalVel, 0.9), scale(target, 0.1));
+                    player.velocity = add(verticalVel, blended);
+                } else {
+                    player.velocity = add(verticalVel, scale(moveDir, speed));
+                }
             } else {
                 const verticalVel = scale(up, dot(player.velocity, up));
-                const horizontalVel = subtract(player.velocity, verticalVel);
-                player.velocity = add(verticalVel, scale(horizontalVel, 0.9));
+                if (onIce) {
+                    // Slide on ice with friction
+                    const horizontalVel = subtract(player.velocity, verticalVel);
+                    player.velocity = add(verticalVel, scale(horizontalVel, 0.9));
+                } else {
+                    // Immediately stop horizontal movement
+                    player.velocity = verticalVel;
+                }
             }
 
             if (isJumpPressed() && player.grounded) {
@@ -1449,34 +1505,70 @@
 
             player.velocity = add(player.velocity, scale(up, -GRAVITY * dt));
 
+            const oldPos = [player.position[0], player.position[1], player.position[2]];
             const oldUp = up;
             player.position = add(player.position, scale(player.velocity, dt));
 
-            // Ground collision
-            const newDist = length(player.position);
-            const newUp = normalize(player.position);
-            const groundHeight = getTerrainHeight(player.position, gameState.topo, gameState.worldBlocks, gameState.findFace);
+            let newDist = length(player.position);
+            let newUp = normalize(player.position);
 
-            if (newDist < groundHeight + PLAYER_HEIGHT) {
-                player.position = scale(newUp, groundHeight + PLAYER_HEIGHT);
+            // Wall collision: check if player body fits at new horizontal position
+            const newGroundH = getTerrainHeight(player.position, gameState.topo, gameState.worldBlocks, gameState.findFace);
+            const standEyeDist = Math.max(newDist, newGroundH + PLAYER_EYE_HEIGHT);
+            const feetH = standEyeDist - PLAYER_EYE_HEIGHT;
+            const bodyBot = feetH + 0.01;
+            const bodyTop = feetH + PLAYER_HEIGHT - 0.01;
+            const lBot = Math.floor((bodyBot - INNER_RADIUS) / BLOCK_HEIGHT);
+            const lTop = Math.floor((bodyTop - INNER_RADIUS) / BLOCK_HEIGHT);
+            const newFace = gameState.findFace(newUp);
+            let blocked = false;
+            for (let l = Math.max(0, lBot); l <= Math.min(NUM_LAYERS - 1, lTop); l++) {
+                const b = getBlock(gameState.worldBlocks, newFace, l);
+                if (b !== BLOCK_AIR && b !== BLOCK_WATER) { blocked = true; break; }
+            }
+            if (blocked) {
+                // Revert horizontal movement, keep vertical change
+                player.position = scale(normalize(oldPos), newDist);
+                newUp = normalize(player.position);
+                const vRad = dot(player.velocity, newUp);
+                player.velocity = scale(newUp, vRad);
+            }
+
+            // Ground collision (at possibly reverted position)
+            const groundHeight = blocked
+                ? getTerrainHeight(player.position, gameState.topo, gameState.worldBlocks, gameState.findFace)
+                : newGroundH;
+            newDist = length(player.position);
+            newUp = normalize(player.position);
+
+            if (newDist < groundHeight + PLAYER_EYE_HEIGHT) {
+                const snapUp = (groundHeight + PLAYER_EYE_HEIGHT) - newDist;
+                player.position = scale(newUp, groundHeight + PLAYER_EYE_HEIGHT);
                 const velDown = dot(player.velocity, scale(newUp, -1));
                 if (velDown > 0) player.velocity = add(player.velocity, scale(newUp, velDown));
+                // If snapped up significantly (stepped onto block), kill upward velocity to prevent super jumps
+                if (snapUp > BLOCK_HEIGHT * 0.3) {
+                    const velUp = dot(player.velocity, newUp);
+                    if (velUp > 0) player.velocity = subtract(player.velocity, scale(newUp, velUp));
+                }
                 player.grounded = true;
             } else {
                 player.grounded = false;
             }
 
-            // Ceiling collision
-            const headDist = length(player.position) + PLAYER_HEIGHT * 0.5;
+            // Ceiling collision — head is above eyes by (PLAYER_HEIGHT - PLAYER_EYE_HEIGHT)
+            const headClearance = PLAYER_HEIGHT - PLAYER_EYE_HEIGHT;
+            const headDist = length(player.position) + headClearance;
             const headLayer = Math.floor((headDist - INNER_RADIUS) / BLOCK_HEIGHT);
             if (headLayer >= 0 && headLayer < NUM_LAYERS) {
-                const headFace = gameState.findFace(newUp);
+                const curUp = normalize(player.position);
+                const headFace = gameState.findFace(curUp);
                 if (getBlock(gameState.worldBlocks, headFace, headLayer) !== BLOCK_AIR &&
                     getBlock(gameState.worldBlocks, headFace, headLayer) !== BLOCK_WATER) {
-                    const ceilH = layerInnerRadius(headLayer) - PLAYER_HEIGHT * 0.5;
-                    player.position = scale(newUp, ceilH);
-                    const upVel = dot(player.velocity, newUp);
-                    if (upVel > 0) player.velocity = subtract(player.velocity, scale(newUp, upVel));
+                    const ceilH = layerInnerRadius(headLayer) - headClearance;
+                    player.position = scale(curUp, ceilH);
+                    const upVel = dot(player.velocity, curUp);
+                    if (upVel > 0) player.velocity = subtract(player.velocity, scale(curUp, upVel));
                 }
             }
 
@@ -1554,14 +1646,14 @@
             textEl.textContent = 'Building topology...';
             await new Promise(r => setTimeout(r, 10));
 
-            const topo = buildIcosphereTopology(SUBDIVISIONS);
-            console.log(`Topology: ${topo.faceCount} faces, ${topo.vertexCount} vertices, ${topo.chunkCount} chunks`);
+            const topo = buildCubeSphereTopology();
+            console.log(`Topology: ${topo.faceCount} faces, ${topo.chunkCount} chunks`);
 
             fillEl.style.width = '15%';
             textEl.textContent = 'Building face lookup...';
             await new Promise(r => setTimeout(r, 10));
 
-            const findFace = buildFaceLookup(topo);
+            const findFace = buildFaceLookup();
 
             fillEl.style.width = '25%';
             textEl.textContent = 'Generating terrain...';
@@ -1607,7 +1699,7 @@
                     break;
                 }
             }
-            player.position = scale(spawnDir, spawnHeight + PLAYER_HEIGHT);
+            player.position = scale(spawnDir, spawnHeight + PLAYER_EYE_HEIGHT);
 
             initHighlight();
 
@@ -1618,12 +1710,24 @@
 
             gameState = { topo, worldBlocks, findFace, chunks };
 
+            // Apply any block changes received from server before gameState was ready
+            if (pendingWorldChanges.length > 0) {
+                for (const c of pendingWorldChanges) {
+                    setBlock(worldBlocks, c.face, c.layer, c.block);
+                    markChunkDirty(c.face);
+                }
+                pendingWorldChanges = [];
+            }
+
             // Start render loop
             requestAnimationFrame(render);
         }
 
         // ===== RENDER LOOP =====
         let lastTime = performance.now();
+        const BASE_FOV = Math.PI / 3; // 60 degrees
+        const SPRINT_FOV = BASE_FOV + (20 * Math.PI / 180); // +20 degrees
+        let currentFov = BASE_FOV;
 
         function getVisibleChunks() {
             const dir = normalize(player.position);
@@ -1643,6 +1747,11 @@
             updatePhysics(dt);
             sendPositionUpdate(player);
 
+            // Smooth FOV transition for sprint
+            const targetFov = player.isSprinting ? SPRINT_FOV : BASE_FOV;
+            const fovSpeed = 8; // interpolation speed
+            currentFov += (targetFov - currentFov) * Math.min(1, fovSpeed * dt);
+
             // Rebuild dirty chunks
             let rebuilds = 0;
             for (const chunk of gameState.chunks) {
@@ -1660,6 +1769,13 @@
             lonEl.textContent = (Math.atan2(np[0], np[2]) * 180 / Math.PI).toFixed(1);
             groundedEl.textContent = player.grounded ? 'Yes' : 'No';
 
+            // Update sprint bar
+            const sprintFill = document.getElementById('sprintFill');
+            const sprintBar = document.getElementById('sprintBar');
+            sprintFill.style.width = player.sprintMeter + '%';
+            sprintFill.className = player.isSprinting ? 'sprinting' : (player.sprintMeter < 20 ? 'low' : '');
+            sprintBar.style.opacity = player.sprintMeter < 100 || player.isSprinting ? '1' : '0';
+
             // Clear
             gl.clearColor(0.5, 0.7, 0.9, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -1668,7 +1784,7 @@
             ctx.clearRect(0, 0, labelCanvas.width, labelCanvas.height);
 
             gl.useProgram(program);
-            const projection = mat4Perspective(Math.PI / 3, canvas.width / canvas.height, 0.1, 1000);
+            const projection = mat4Perspective(currentFov, canvas.width / canvas.height, 0.1, 1000);
             const view = getCameraMatrix();
             const model = mat4Identity();
             gl.uniformMatrix4fv(uniforms.projection, false, projection);
