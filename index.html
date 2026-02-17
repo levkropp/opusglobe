@@ -320,8 +320,8 @@
         // Cube-sphere: R=214, N=168, h=2.0 → cell side = Rπ/(2N) ≈ 2.001 → near-perfect cubes
         const PLANET_RADIUS = 214;
         const GRAVITY = 55;
-        const MOVE_SPEED = 7.5;
-        const SPRINT_SPEED = 15;
+        const MOVE_SPEED = 9;
+        const SPRINT_SPEED = 18;
         const JUMP_VELOCITY = 17;
         const GRID_N = 168; // cells per cube face edge
         const NUM_LAYERS = 15;
@@ -330,6 +330,7 @@
         const INNER_RADIUS = PLANET_RADIUS - SURFACE_LAYER * BLOCK_HEIGHT; // 200
         const PLAYER_HEIGHT = 1.8 * BLOCK_HEIGHT; // 3.6 total collision height
         const PLAYER_EYE_HEIGHT = 1.62 * BLOCK_HEIGHT; // 3.24 camera offset from feet
+        const PLAYER_RADIUS = 0.3 * BLOCK_HEIGHT; // 0.6 horizontal collision radius
         const CHUNK_N = 24; // cells per chunk edge
         const CHUNKS_PER_EDGE = GRID_N / CHUNK_N; // 7
         const CHUNKS_PER_FACE = CHUNKS_PER_EDGE * CHUNKS_PER_EDGE; // 49
@@ -1450,13 +1451,14 @@
             if (moveInput.y !== 0) moveDir = add(moveDir, scale(forward, moveInput.y));
             if (moveInput.x !== 0) moveDir = add(moveDir, scale(right, moveInput.x));
 
-            // Sprint: shift + moving forward + meter above 20%
-            const wantsSprint = keys['ShiftLeft'] && moveInput.y > 0 && player.sprintMeter > 20;
-            player.isSprinting = wantsSprint && length(moveDir) > 0;
+            // Sprint: shift + moving forward, can drain to 0 but needs >20% to start again
+            const shiftFwd = keys['ShiftLeft'] && moveInput.y > 0 && length(moveDir) > 0;
+            const canSprint = player.isSprinting ? player.sprintMeter > 0 : player.sprintMeter > 20;
+            player.isSprinting = shiftFwd && canSprint;
 
             if (player.isSprinting) {
                 // Drain: 100/6 per second = empties in 6 seconds
-                player.sprintMeter = Math.max(0, player.sprintMeter - (100 / 6) * dt);
+                player.sprintMeter = Math.max(0, player.sprintMeter - (100 / 5) * dt);
             } else {
                 // Regen with S-curve: slow at extremes (<10%, >90%), fast in middle
                 // Total regen time ~10 seconds from empty
@@ -1512,32 +1514,68 @@
             let newDist = length(player.position);
             let newUp = normalize(player.position);
 
-            // Wall collision: check if player body fits at new horizontal position
-            const newGroundH = getTerrainHeight(player.position, gameState.topo, gameState.worldBlocks, gameState.findFace);
-            const standEyeDist = Math.max(newDist, newGroundH + PLAYER_EYE_HEIGHT);
-            const feetH = standEyeDist - PLAYER_EYE_HEIGHT;
-            const bodyBot = feetH + 0.01;
+            // Wall collision: 8-direction probe ring around player at PLAYER_RADIUS
+            const pDist = length(player.position);
+            const pUp = normalize(player.position);
+            // Use ground height so gravity dip doesn't make probes hit the floor
+            const groundH = getTerrainHeight(player.position, gameState.topo, gameState.worldBlocks, gameState.findFace);
+            const feetH = Math.max(pDist - PLAYER_EYE_HEIGHT, groundH);
+            const bodyBot = feetH + 0.1;
             const bodyTop = feetH + PLAYER_HEIGHT - 0.01;
-            const lBot = Math.floor((bodyBot - INNER_RADIUS) / BLOCK_HEIGHT);
-            const lTop = Math.floor((bodyTop - INNER_RADIUS) / BLOCK_HEIGHT);
-            const newFace = gameState.findFace(newUp);
-            let blocked = false;
-            for (let l = Math.max(0, lBot); l <= Math.min(NUM_LAYERS - 1, lTop); l++) {
-                const b = getBlock(gameState.worldBlocks, newFace, l);
-                if (b !== BLOCK_AIR && b !== BLOCK_WATER) { blocked = true; break; }
-            }
-            if (blocked) {
-                // Revert horizontal movement, keep vertical change
-                player.position = scale(normalize(oldPos), newDist);
-                newUp = normalize(player.position);
-                const vRad = dot(player.velocity, newUp);
-                player.velocity = scale(newUp, vRad);
+            const lBot = Math.max(0, Math.floor((bodyBot - INNER_RADIUS) / BLOCK_HEIGHT));
+            const lTop = Math.min(NUM_LAYERS - 1, Math.floor((bodyTop - INNER_RADIUS) / BLOCK_HEIGHT));
+
+            // Build tangent basis
+            const basisFwd = subtract(forward, scale(pUp, dot(forward, pUp)));
+            const bfLen = length(basisFwd);
+            const tX = bfLen > 0.001 ? scale(basisFwd, 1/bfLen) : (() => {
+                const t = Math.abs(pUp[1]) < 0.9 ? [0,1,0] : [1,0,0];
+                return normalize(subtract(t, scale(pUp, dot(t, pUp))));
+            })();
+            const tY = normalize(cross(pUp, tX));
+
+            const ang = PLAYER_RADIUS / pDist;
+            const INV_SQRT2 = 0.7071;
+
+            // 8 probe directions: N, NE, E, SE, S, SW, W, NW
+            const probeDirs = [
+                tX,
+                normalize(add(scale(tX, INV_SQRT2), scale(tY, INV_SQRT2))),
+                tY,
+                normalize(add(scale(tX, -INV_SQRT2), scale(tY, INV_SQRT2))),
+                scale(tX, -1),
+                normalize(add(scale(tX, -INV_SQRT2), scale(tY, -INV_SQRT2))),
+                scale(tY, -1),
+                normalize(add(scale(tX, INV_SQRT2), scale(tY, -INV_SQRT2))),
+            ];
+
+            for (const pd of probeDirs) {
+                const pN = normalize(add(pUp, scale(pd, ang)));
+                const face = gameState.findFace(pN);
+                let solid = false;
+                for (let l = lBot; l <= lTop; l++) {
+                    const b = getBlock(gameState.worldBlocks, face, l);
+                    if (b !== BLOCK_AIR && b !== BLOCK_WATER) { solid = true; break; }
+                }
+                if (solid) {
+                    // Kill velocity component toward this wall
+                    const vToward = dot(player.velocity, pd);
+                    if (vToward > 0) {
+                        player.velocity = subtract(player.velocity, scale(pd, vToward));
+                    }
+                    // Push position away from wall
+                    const posToward = dot(subtract(player.position, oldPos), pd);
+                    if (posToward > 0) {
+                        player.position = subtract(player.position, scale(pd, posToward));
+                    }
+                }
             }
 
-            // Ground collision (at possibly reverted position)
-            const groundHeight = blocked
-                ? getTerrainHeight(player.position, gameState.topo, gameState.worldBlocks, gameState.findFace)
-                : newGroundH;
+            newDist = length(player.position);
+            newUp = normalize(player.position);
+
+            // Ground collision
+            const groundHeight = getTerrainHeight(player.position, gameState.topo, gameState.worldBlocks, gameState.findFace);
             newDist = length(player.position);
             newUp = normalize(player.position);
 
@@ -1776,12 +1814,27 @@
             sprintFill.className = player.isSprinting ? 'sprinting' : (player.sprintMeter < 20 ? 'low' : '');
             sprintBar.style.opacity = player.sprintMeter < 100 || player.isSprinting ? '1' : '0';
 
+            // Check if camera is inside a solid block
+            const camDist = length(player.position);
+            const camLayer = Math.floor((camDist - INNER_RADIUS) / BLOCK_HEIGHT);
+            const camFace = gameState.findFace(normalize(player.position));
+            const camBlock = (camLayer >= 0 && camLayer < NUM_LAYERS)
+                ? getBlock(gameState.worldBlocks, camFace, camLayer) : BLOCK_AIR;
+            const insideBlock = camBlock !== BLOCK_AIR && camBlock !== BLOCK_WATER;
+
+            ctx.clearRect(0, 0, labelCanvas.width, labelCanvas.height);
+
+            if (insideBlock) {
+                // Fill screen with block color — prevents see-through glitch
+                const bc = BLOCK_COLORS[camBlock];
+                gl.clearColor(bc[0] * 0.6, bc[1] * 0.6, bc[2] * 0.6, 1.0);
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            } else {
             // Clear
             gl.clearColor(0.5, 0.7, 0.9, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
             gl.enable(gl.DEPTH_TEST);
             gl.enable(gl.CULL_FACE);
-            ctx.clearRect(0, 0, labelCanvas.width, labelCanvas.height);
 
             gl.useProgram(program);
             const projection = mat4Perspective(currentFov, canvas.width / canvas.height, 0.1, 1000);
@@ -1853,6 +1906,7 @@
 
             document.getElementById('playerCount').textContent = otherPlayers.size + 1;
             gl.uniformMatrix4fv(uniforms.model, false, model);
+            } // end insideBlock else
 
             requestAnimationFrame(render);
         }
